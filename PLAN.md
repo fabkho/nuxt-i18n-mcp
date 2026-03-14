@@ -932,7 +932,9 @@ The MCP spec has a [SEP for nested task execution](https://modelcontextprotocol.
 - **File watching** — Notify the agent when locale files change on disk (via MCP `notifications/resources/updated`)
 - **Translation memory** — Cache previous translations to ensure consistency when the same phrase appears in multiple places
 - **Pluralization support** — Handle vue-i18n plural forms (`{ count } item | { count } items`)
-- **Key usage analysis** — Scan Vue/TS source files to find unused translation keys
+- **Key usage analysis** — Scan Vue/TS source files to find unused translation keys. Two sub-features:
+  - **Hardcoded string detection** — Find user-facing strings in Vue/TS files not wrapped in `$t()` / `t()` / `useI18n()`. Inspired by better-i18n's `scan` command. Could support `--staged` for pre-commit hooks.
+  - **Orphan key detection** — Find keys that exist in translation files but are never referenced in code. The inverse of `get_missing_translations`. Helps clean up dead translations.
 - **`.i18n-mcp.json` JSON Schema** — Publish a JSON Schema so IDEs provide autocompletion and validation when editing the config file
 - **Glossary validation** — Tool that checks existing translations against the glossary and reports inconsistencies (e.g., "fr-FR uses 'Réservation' but glossary says 'Booking' should be used")
 - **Auto-generate `.i18n-mcp.json`** — Tool that analyzes existing translations and proposes a glossary, layer rules, and examples based on patterns found
