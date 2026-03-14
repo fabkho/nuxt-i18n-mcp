@@ -3,6 +3,7 @@ import { readdir } from 'node:fs/promises'
 import { resolve, basename, relative } from 'node:path'
 import { loadKit } from './nuxt-loader.js'
 import type { I18nConfig, LocaleDefinition, LocaleDir } from './types.js'
+import { loadProjectConfig } from './project-config.js'
 import { log } from '../utils/logger.js'
 import { ConfigError } from '../utils/errors.js'
 
@@ -74,12 +75,24 @@ export function clearConfigCache(): void {
 }
 
 /**
+ * Get the currently cached config without triggering detection.
+ * Returns null if no config has been detected yet.
+ * Used by MCP resources which can't pass a projectDir parameter.
+ */
+export function getCachedConfig(): I18nConfig | null {
+  return cachedConfig
+}
+
+/**
  * Extract i18n config from a loaded Nuxt instance.
  */
 async function extractI18nConfig(
   nuxt: { options: Record<string, unknown> },
   projectDir: string,
 ): Promise<I18nConfig> {
+  // Load project config independently of Nuxt config
+  const projectConfig = await loadProjectConfig(projectDir)
+
   const nuxtOptions = nuxt.options as Record<string, unknown>
   const i18nOptions = nuxtOptions.i18n as Record<string, unknown> | undefined
   const layers = (nuxtOptions._layers ?? []) as Array<{
@@ -129,6 +142,7 @@ async function extractI18nConfig(
     fallbackLocale,
     locales,
     localeDirs,
+    projectConfig: projectConfig ?? undefined,
   }
 }
 

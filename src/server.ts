@@ -1,6 +1,6 @@
-import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
+import { McpServer, ResourceTemplate } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { z } from 'zod'
-import { detectI18nConfig, clearConfigCache } from './config/detector.js'
+import { detectI18nConfig, clearConfigCache, getCachedConfig } from './config/detector.js'
 import type { I18nConfig } from './config/types.js'
 import { readLocaleFile, readLocaleFileWithMeta } from './io/json-reader.js'
 import { writeLocaleFile, mutateLocaleFile } from './io/json-writer.js'
@@ -434,6 +434,294 @@ export function createServer(): McpServer {
           ],
           isError: true,
         }
+      }
+    },
+  )
+
+  // ─── Tool: get_missing_translations ────────────────────────────
+
+  server.registerTool(
+    'get_missing_translations',
+    {
+      title: 'Get Missing Translations',
+      description:
+        'Find translation keys that exist in the reference locale but are missing in other locales. Scans a specific layer or all layers.',
+      inputSchema: {
+        layer: z.string().optional().describe('Layer name to scan. If omitted, scans all layers.'),
+        referenceLocale: z.string().optional().describe('Reference locale code to compare against. Defaults to the project default locale.'),
+        targetLocales: z.array(z.string()).optional().describe('Locale codes to check for missing keys. Defaults to all locales except the reference.'),
+        projectDir: z.string().optional().describe('Absolute path to the Nuxt project root. Defaults to server cwd.'),
+      },
+    },
+    async ({ layer, referenceLocale, targetLocales, projectDir }) => {
+      try {
+        const dir = projectDir ?? process.cwd()
+        const config = await detectI18nConfig(dir)
+
+        // Determine reference locale
+        const refCode = referenceLocale ?? config.defaultLocale
+        const refLocale = findLocale(config, refCode)
+        if (!refLocale) {
+          throw new Error(`Reference locale not found: ${refCode}. Available: ${config.locales.map(l => l.code).join(', ')}`)
+        }
+
+        // Determine target locales
+        const targets = targetLocales
+          ? targetLocales.map((code) => {
+              const loc = findLocale(config, code)
+              if (!loc) {
+                throw new Error(`Target locale not found: ${code}. Available: ${config.locales.map(l => l.code).join(', ')}`)
+              }
+              return loc
+            })
+          : config.locales.filter(l => l.code !== refLocale.code)
+
+        // Determine layers to scan
+        const layersToScan = layer
+          ? config.localeDirs.filter(d => d.layer === layer)
+          : config.localeDirs.filter(d => !d.aliasOf)
+
+        if (layersToScan.length === 0) {
+          throw new Error(layer ? `Layer not found: ${layer}` : 'No locale directories found')
+        }
+
+        const result: Record<string, Record<string, string[]>> = {}
+        let totalMissing = 0
+
+        for (const localeDir of layersToScan) {
+          // Read reference locale file for this layer
+          const refFilePath = resolveLocaleFilePath(config, localeDir.layer, refLocale.file)
+          if (!refFilePath) continue
+
+          let refData: Record<string, unknown>
+          try {
+            refData = await readLocaleFile(refFilePath)
+          } catch {
+            // Reference file doesn't exist in this layer, skip
+            continue
+          }
+
+          const refKeys = getLeafKeys(refData)
+          if (refKeys.length === 0) continue
+
+          for (const target of targets) {
+            const targetFilePath = resolveLocaleFilePath(config, localeDir.layer, target.file)
+            let targetKeys: string[] = []
+
+            if (targetFilePath) {
+              try {
+                const targetData = await readLocaleFile(targetFilePath)
+                targetKeys = getLeafKeys(targetData)
+              } catch {
+                // Target file doesn't exist — all ref keys are missing
+              }
+            }
+
+            const targetKeySet = new Set(targetKeys)
+            const missing = refKeys.filter(k => !targetKeySet.has(k))
+
+            if (missing.length > 0) {
+              if (!result[target.code]) {
+                result[target.code] = {}
+              }
+              result[target.code][localeDir.layer] = missing
+              totalMissing += missing.length
+            }
+          }
+        }
+
+        const output = {
+          missing: result,
+          summary: {
+            referenceLocale: refLocale.code,
+            targetLocales: targets.map(t => t.code),
+            layersScanned: layersToScan.map(d => d.layer),
+            totalMissingKeys: totalMissing,
+          },
+        }
+
+        return {
+          content: [
+            {
+              type: 'text' as const,
+              text: JSON.stringify(output, null, 2),
+            },
+          ],
+        }
+      } catch (error) {
+        return {
+          content: [
+            {
+              type: 'text' as const,
+              text: `Error finding missing translations: ${error instanceof Error ? error.message : String(error)}`,
+            },
+          ],
+          isError: true,
+        }
+      }
+    },
+  )
+
+  // ─── Tool: search_translations ─────────────────────────────────
+
+  server.registerTool(
+    'search_translations',
+    {
+      title: 'Search Translations',
+      description:
+        'Search translation files by key pattern (glob/regex) or value substring. Useful for finding existing translations before adding duplicates.',
+      inputSchema: {
+        query: z.string().describe('Search query — matched against keys and/or values'),
+        searchIn: z.enum(['keys', 'values', 'both']).optional().describe('Where to search. Default: "both"'),
+        layer: z.string().optional().describe('Layer to search in. If omitted, searches all layers.'),
+        locale: z.string().optional().describe('Locale to search in. If omitted, searches all locales.'),
+        projectDir: z.string().optional().describe('Absolute path to the Nuxt project root. Defaults to server cwd.'),
+      },
+    },
+    async ({ query, searchIn, layer, locale, projectDir }) => {
+      try {
+        const dir = projectDir ?? process.cwd()
+        const config = await detectI18nConfig(dir)
+
+        const mode = searchIn ?? 'both'
+        const queryLower = query.toLowerCase()
+
+        // Determine layers to search
+        const layersToSearch = layer
+          ? config.localeDirs.filter(d => d.layer === layer)
+          : config.localeDirs.filter(d => !d.aliasOf)
+
+        if (layersToSearch.length === 0) {
+          throw new Error(layer ? `Layer not found: ${layer}` : 'No locale directories found')
+        }
+
+        // Determine locales to search
+        const localesToSearch = locale
+          ? (() => {
+              const found = findLocale(config, locale)
+              if (!found) {
+                throw new Error(`Locale not found: ${locale}. Available: ${config.locales.map(l => l.code).join(', ')}`)
+              }
+              return [found]
+            })()
+          : config.locales
+
+        const matches: Array<{ layer: string; locale: string; key: string; value: unknown }> = []
+
+        for (const localeDir of layersToSearch) {
+          for (const loc of localesToSearch) {
+            const filePath = resolveLocaleFilePath(config, localeDir.layer, loc.file)
+            if (!filePath) continue
+
+            let data: Record<string, unknown>
+            try {
+              data = await readLocaleFile(filePath)
+            } catch {
+              // File doesn't exist in this layer, skip
+              continue
+            }
+
+            const leafKeys = getLeafKeys(data)
+
+            for (const key of leafKeys) {
+              const value = getNestedValue(data, key)
+              const valueStr = typeof value === 'string' ? value : JSON.stringify(value)
+
+              const keyMatch = mode === 'keys' || mode === 'both'
+                ? key.toLowerCase().includes(queryLower)
+                : false
+              const valueMatch = mode === 'values' || mode === 'both'
+                ? valueStr.toLowerCase().includes(queryLower)
+                : false
+
+              if (keyMatch || valueMatch) {
+                matches.push({
+                  layer: localeDir.layer,
+                  locale: loc.code,
+                  key,
+                  value,
+                })
+              }
+            }
+          }
+        }
+
+        return {
+          content: [
+            {
+              type: 'text' as const,
+              text: JSON.stringify({ matches, totalMatches: matches.length }, null, 2),
+            },
+          ],
+        }
+      } catch (error) {
+        return {
+          content: [
+            {
+              type: 'text' as const,
+              text: `Error searching translations: ${error instanceof Error ? error.message : String(error)}`,
+            },
+          ],
+          isError: true,
+        }
+      }
+    },
+  )
+
+  // ─── Resources ────────────────────────────────────────────────
+
+  server.registerResource(
+    'locale-file',
+    new ResourceTemplate('i18n:///{layer}/{file}', {
+      list: async () => {
+        const config = getCachedConfig()
+        if (!config) {
+          return { resources: [] }
+        }
+        const resources: Array<{
+          uri: string
+          name: string
+          description?: string
+          mimeType?: string
+        }> = []
+
+        for (const localeDir of config.localeDirs) {
+          if (localeDir.aliasOf) continue
+          for (const locale of config.locales) {
+            resources.push({
+              uri: `i18n:///${localeDir.layer}/${locale.file}`,
+              name: `${localeDir.layer}/${locale.file}`,
+              description: `${locale.name ?? locale.code} translations for ${localeDir.layer} layer`,
+              mimeType: 'application/json',
+            })
+          }
+        }
+
+        return { resources }
+      },
+    }),
+    {
+      description: 'Locale translation file for a specific layer and locale',
+      mimeType: 'application/json',
+    },
+    async (uri, { layer, file }) => {
+      const config = getCachedConfig()
+      if (!config) {
+        throw new Error('No i18n config detected yet. Call detect_i18n_config first.')
+      }
+      const filePath = resolveLocaleFilePath(config, layer as string, file as string)
+      if (!filePath) {
+        throw new Error(`Locale file not found: ${layer}/${file}`)
+      }
+      const data = await readLocaleFile(filePath)
+      return {
+        contents: [
+          {
+            uri: uri.href,
+            mimeType: 'application/json',
+            text: JSON.stringify(data, null, 2),
+          },
+        ],
       }
     },
   )

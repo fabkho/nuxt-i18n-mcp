@@ -1,0 +1,35 @@
+{
+  "context": "This is the anny playground project. It demonstrates a Nuxt app with i18n support, featuring a root layer with shared translations and an app-admin layer with admin-specific translations.",
+  "layerRules": [
+    {
+      "layer": "root",
+      "description": "Shared translations used across all apps. Keys like common.actions.*, common.messages.*, common.navigation.*",
+      "when": "The key is generic enough to be used in multiple apps (e.g., 'Save', 'Cancel', 'Loading...')"
+    },
+    {
+      "layer": "app-admin",
+      "description": "Admin dashboard translations. Keys like admin.*, pages.*, components.* specific to the admin panel.",
+      "when": "The key is only relevant to admin functionality"
+    }
+  ],
+  "glossary": {
+    "Buchung": "Booking (never 'Reservation')",
+    "Ressource": "Resource (a bookable entity like a room, desk, or person)",
+    "Termin": "Appointment"
+  },
+  "translationPrompt": "You are translating for a SaaS booking platform. Use professional but approachable tone. Preserve all {placeholders}. Keep translations concise.",
+  "localeNotes": {
+    "de-DE": "German. Primary language of the platform.",
+    "en-US": "American English.",
+    "fr-FR": "French.",
+    "es-ES": "Spanish."
+  },
+  "examples": [
+    {
+      "key": "common.actions.save",
+      "de-DE": "Speichern",
+      "en-US": "Save",
+      "note": "Concise, imperative"
+    }
+  ]
+}

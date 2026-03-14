@@ -27,6 +27,29 @@ export interface LocaleDir {
 }
 
 /**
+ * Project-specific configuration from `.i18n-mcp.json`.
+ * All fields are optional — the server passes them to the agent as-is.
+ */
+export interface ProjectConfig {
+  /** Free-form project background for the agent */
+  context?: string
+  /** Rules for deciding which layer a key belongs to */
+  layerRules?: Array<{
+    layer: string
+    description: string
+    when: string
+  }>
+  /** Term dictionary for consistent translations */
+  glossary?: Record<string, string>
+  /** System prompt for translation requests */
+  translationPrompt?: string
+  /** Per-locale context (formal register, regional differences, etc.) */
+  localeNotes?: Record<string, string>
+  /** Few-shot translation examples */
+  examples?: Array<Record<string, string>>
+}
+
+/**
  * The fully resolved i18n configuration for a Nuxt project.
  */
 export interface I18nConfig {
@@ -40,4 +63,6 @@ export interface I18nConfig {
   locales: LocaleDefinition[]
   /** All discovered locale directories, per layer */
   localeDirs: LocaleDir[]
+  /** Optional project-specific config from .i18n-mcp.json */
+  projectConfig?: ProjectConfig
 }
