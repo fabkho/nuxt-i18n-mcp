@@ -9,6 +9,8 @@ import {
   setNestedValue,
   hasNestedKey,
   getLeafKeys,
+  removeNestedValue,
+  renameNestedKey,
 } from './io/key-operations.js'
 import { log } from './utils/logger.js'
 import { join } from 'node:path'
@@ -660,6 +662,269 @@ export function createServer(): McpServer {
             {
               type: 'text' as const,
               text: `Error searching translations: ${error instanceof Error ? error.message : String(error)}`,
+            },
+          ],
+          isError: true,
+        }
+      }
+    },
+  )
+
+  // ─── Tool: remove_translations ─────────────────────────────────
+
+  server.registerTool(
+    'remove_translations',
+    {
+      title: 'Remove Translations',
+      description:
+        'Remove one or more translation keys from ALL locale files in the specified layer. Use dryRun to preview changes before applying them.',
+      inputSchema: {
+        layer: z.string().describe('Layer name (e.g., "root", "app-admin")'),
+        keys: z
+          .array(z.string())
+          .describe('Dot-separated key paths to remove (e.g., ["common.actions.save"])'),
+        dryRun: z
+          .boolean()
+          .optional()
+          .describe('If true, return a preview of changes without writing. Default: false.'),
+        projectDir: z
+          .string()
+          .optional()
+          .describe('Absolute path to the Nuxt project root. Defaults to server cwd.'),
+      },
+    },
+    async ({ layer, keys, dryRun, projectDir }) => {
+      try {
+        const dir = projectDir ?? process.cwd()
+        const config = await detectI18nConfig(dir)
+        const isDryRun = dryRun ?? false
+
+        const localeDir = config.localeDirs.find(d => d.layer === layer)
+        if (!localeDir) {
+          throw new Error(`Layer not found: ${layer}. Available: ${config.localeDirs.map(d => d.layer).join(', ')}`)
+        }
+        if (localeDir.aliasOf) {
+          throw new Error(`Layer '${layer}' is an alias of '${localeDir.aliasOf}'. Modify the source layer instead.`)
+        }
+
+        const preview: Array<{ locale: string; key: string; oldValue: unknown }> = []
+        const removed: string[] = []
+        const notFound: string[] = []
+        const filesWritten = new Set<string>()
+
+        for (const locale of config.locales) {
+          const filePath = resolveLocaleFilePath(config, layer, locale.file)
+          if (!filePath) continue
+
+          let data: Record<string, unknown>
+          try {
+            data = await readLocaleFile(filePath)
+          } catch {
+            continue
+          }
+
+          if (isDryRun) {
+            for (const key of keys) {
+              const value = getNestedValue(data, key)
+              if (value !== undefined) {
+                preview.push({ locale: locale.code, key, oldValue: value })
+              }
+            }
+          } else {
+            await mutateLocaleFile(filePath, (fileData) => {
+              for (const key of keys) {
+                if (removeNestedValue(fileData, key)) {
+                  removed.push(`${locale.code}:${key}`)
+                } else {
+                  notFound.push(`${locale.code}:${key}`)
+                }
+              }
+            })
+            filesWritten.add(filePath)
+          }
+        }
+
+        if (isDryRun) {
+          return {
+            content: [
+              {
+                type: 'text' as const,
+                text: JSON.stringify({
+                  dryRun: true,
+                  wouldRemove: preview,
+                  summary: {
+                    keysFound: preview.length,
+                    message: 'Call again with dryRun: false to apply these changes.',
+                  },
+                }, null, 2),
+              },
+            ],
+          }
+        }
+
+        const uniqueRemoved = [...new Set(removed.map(r => r.split(':')[1]))]
+        return {
+          content: [
+            {
+              type: 'text' as const,
+              text: JSON.stringify({
+                removed: uniqueRemoved,
+                removedPerLocale: removed,
+                notFound: [...new Set(notFound)],
+                filesWritten: filesWritten.size,
+              }, null, 2),
+            },
+          ],
+        }
+      } catch (error) {
+        return {
+          content: [
+            {
+              type: 'text' as const,
+              text: `Error removing translations: ${error instanceof Error ? error.message : String(error)}`,
+            },
+          ],
+          isError: true,
+        }
+      }
+    },
+  )
+
+  // ─── Tool: rename_translation_key ──────────────────────────────
+
+  server.registerTool(
+    'rename_translation_key',
+    {
+      title: 'Rename Translation Key',
+      description:
+        'Rename/move a translation key across ALL locale files in a layer. Preserves the value in every locale. Use dryRun to preview changes before applying them.',
+      inputSchema: {
+        layer: z.string().describe('Layer name (e.g., "root", "app-admin")'),
+        oldKey: z.string().describe('Current dot-separated key path (e.g., "common.actions.save")'),
+        newKey: z.string().describe('New dot-separated key path (e.g., "common.buttons.save")'),
+        dryRun: z
+          .boolean()
+          .optional()
+          .describe('If true, return a preview of changes without writing. Default: false.'),
+        projectDir: z
+          .string()
+          .optional()
+          .describe('Absolute path to the Nuxt project root. Defaults to server cwd.'),
+      },
+    },
+    async ({ layer, oldKey, newKey, dryRun, projectDir }) => {
+      try {
+        const dir = projectDir ?? process.cwd()
+        const config = await detectI18nConfig(dir)
+        const isDryRun = dryRun ?? false
+
+        if (oldKey === newKey) {
+          throw new Error('Old key and new key are the same.')
+        }
+
+        const localeDir = config.localeDirs.find(d => d.layer === layer)
+        if (!localeDir) {
+          throw new Error(`Layer not found: ${layer}. Available: ${config.localeDirs.map(d => d.layer).join(', ')}`)
+        }
+        if (localeDir.aliasOf) {
+          throw new Error(`Layer '${layer}' is an alias of '${localeDir.aliasOf}'. Modify the source layer instead.`)
+        }
+
+        const preview: Array<{ locale: string; oldKey: string; newKey: string; value: unknown }> = []
+        const renamed: string[] = []
+        const notFound: string[] = []
+        const conflicts: string[] = []
+        const filesWritten = new Set<string>()
+
+        for (const locale of config.locales) {
+          const filePath = resolveLocaleFilePath(config, layer, locale.file)
+          if (!filePath) continue
+
+          let data: Record<string, unknown>
+          try {
+            data = await readLocaleFile(filePath)
+          } catch {
+            continue
+          }
+
+          const oldValue = getNestedValue(data, oldKey)
+          if (oldValue === undefined) {
+            notFound.push(locale.code)
+            continue
+          }
+
+          if (hasNestedKey(data, newKey)) {
+            conflicts.push(locale.code)
+            continue
+          }
+
+          if (isDryRun) {
+            preview.push({ locale: locale.code, oldKey, newKey, value: oldValue })
+          } else {
+            await mutateLocaleFile(filePath, (fileData) => {
+              renameNestedKey(fileData, oldKey, newKey)
+            })
+            renamed.push(locale.code)
+            filesWritten.add(filePath)
+          }
+        }
+
+        if (isDryRun) {
+          const result: Record<string, unknown> = {
+            dryRun: true,
+            wouldRename: preview,
+            summary: {
+              localesAffected: preview.length,
+              message: 'Call again with dryRun: false to apply these changes.',
+            },
+          }
+          if (notFound.length > 0) {
+            result.notFoundInLocales = notFound
+          }
+          if (conflicts.length > 0) {
+            result.conflictsInLocales = conflicts
+            result.summary = {
+              ...(result.summary as Record<string, unknown>),
+              warning: `New key "${newKey}" already exists in ${conflicts.length} locale(s). These will be skipped.`,
+            }
+          }
+          return {
+            content: [
+              {
+                type: 'text' as const,
+                text: JSON.stringify(result, null, 2),
+              },
+            ],
+          }
+        }
+
+        const summary: Record<string, unknown> = {
+          renamed: renamed,
+          filesWritten: filesWritten.size,
+          oldKey,
+          newKey,
+        }
+        if (notFound.length > 0) {
+          summary.notFoundInLocales = notFound
+        }
+        if (conflicts.length > 0) {
+          summary.skippedDueToConflict = conflicts
+        }
+
+        return {
+          content: [
+            {
+              type: 'text' as const,
+              text: JSON.stringify(summary, null, 2),
+            },
+          ],
+        }
+      } catch (error) {
+        return {
+          content: [
+            {
+              type: 'text' as const,
+              text: `Error renaming translation key: ${error instanceof Error ? error.message : String(error)}`,
             },
           ],
           isError: true,
