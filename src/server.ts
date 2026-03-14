@@ -11,8 +11,10 @@ import {
   getLeafKeys,
   removeNestedValue,
   renameNestedKey,
+  validateTranslationValue,
 } from './io/key-operations.js'
 import { log } from './utils/logger.js'
+import { ToolError } from './utils/errors.js'
 import { join } from 'node:path'
 import { readdir } from 'node:fs/promises'
 
@@ -177,7 +179,9 @@ export function createServer(): McpServer {
           content: [
             {
               type: 'text' as const,
-              text: `Error detecting i18n config: ${error instanceof Error ? error.message : String(error)}`,
+              text: error instanceof ToolError
+                ? `[${error.code}] ${error.message}`
+                : `Error detecting i18n config: ${error instanceof Error ? error.message : String(error)}`,
             },
           ],
           isError: true,
@@ -256,7 +260,9 @@ export function createServer(): McpServer {
           content: [
             {
               type: 'text' as const,
-              text: `Error listing locale dirs: ${error instanceof Error ? error.message : String(error)}`,
+              text: error instanceof ToolError
+                ? `[${error.code}] ${error.message}`
+                : `Error listing locale dirs: ${error instanceof Error ? error.message : String(error)}`,
             },
           ],
           isError: true,
@@ -297,7 +303,7 @@ export function createServer(): McpServer {
           : (() => {
               const found = findLocale(config, locale)
               if (!found) {
-                throw new Error(`Locale not found: ${locale}. Available: ${config.locales.map(l => l.code).join(', ')}`)
+                throw new ToolError(`Locale not found: "${locale}". Available: ${config.locales.map(l => l.code).join(', ')}. Use one of the available locale codes or file names.`, 'LOCALE_NOT_FOUND')
               }
               return [found]
             })()
@@ -334,7 +340,9 @@ export function createServer(): McpServer {
           content: [
             {
               type: 'text' as const,
-              text: `Error getting translations: ${error instanceof Error ? error.message : String(error)}`,
+              text: error instanceof ToolError
+                ? `[${error.code}] ${error.message}`
+                : `Error getting translations: ${error instanceof Error ? error.message : String(error)}`,
             },
           ],
           isError: true,
@@ -375,6 +383,7 @@ export function createServer(): McpServer {
 
         const added: string[] = []
         const skipped: string[] = []
+        const warnings: string[] = []
         const filesWritten = new Set<string>()
 
         // Group translations by locale file
@@ -382,6 +391,10 @@ export function createServer(): McpServer {
 
         for (const [key, localeValues] of Object.entries(translations)) {
           for (const [localeRef, value] of Object.entries(localeValues)) {
+            const warning = validateTranslationValue(value)
+            if (warning) {
+              warnings.push(`${key} (${localeRef}): ${warning}`)
+            }
             const locale = findLocale(config, localeRef)
             if (!locale) {
               log.warn(`Locale not found: ${localeRef}, skipping`)
@@ -414,10 +427,13 @@ export function createServer(): McpServer {
           filesWritten.add(filePath)
         }
 
-        const summary = {
+        const summary: Record<string, unknown> = {
           added: [...new Set(added)],
           skipped: [...new Set(skipped)],
           filesWritten: filesWritten.size,
+        }
+        if (warnings.length > 0) {
+          summary.warnings = warnings
         }
 
         return {
@@ -433,7 +449,9 @@ export function createServer(): McpServer {
           content: [
             {
               type: 'text' as const,
-              text: `Error adding translations: ${error instanceof Error ? error.message : String(error)}`,
+              text: error instanceof ToolError
+                ? `[${error.code}] ${error.message}`
+                : `Error adding translations: ${error instanceof Error ? error.message : String(error)}`,
             },
           ],
           isError: true,
@@ -532,7 +550,9 @@ export function createServer(): McpServer {
           content: [
             {
               type: 'text' as const,
-              text: `Error updating translations: ${error instanceof Error ? error.message : String(error)}`,
+              text: error instanceof ToolError
+                ? `[${error.code}] ${error.message}`
+                : `Error updating translations: ${error instanceof Error ? error.message : String(error)}`,
             },
           ],
           isError: true,
@@ -565,7 +585,7 @@ export function createServer(): McpServer {
         const refCode = referenceLocale ?? config.defaultLocale
         const refLocale = findLocale(config, refCode)
         if (!refLocale) {
-          throw new Error(`Reference locale not found: ${refCode}. Available: ${config.locales.map(l => l.code).join(', ')}`)
+          throw new ToolError(`Reference locale not found: "${refCode}". Available: ${config.locales.map(l => l.code).join(', ')}. Pass a valid locale code as referenceLocale, or omit it to use the project default.`, 'REFERENCE_LOCALE_NOT_FOUND')
         }
 
         // Determine target locales
@@ -573,7 +593,7 @@ export function createServer(): McpServer {
           ? targetLocales.map((code) => {
               const loc = findLocale(config, code)
               if (!loc) {
-                throw new Error(`Target locale not found: ${code}. Available: ${config.locales.map(l => l.code).join(', ')}`)
+                throw new ToolError(`Target locale not found: "${code}". Available: ${config.locales.map(l => l.code).join(', ')}. Pass valid locale codes in targetLocales.`, 'LOCALE_NOT_FOUND')
               }
               return loc
             })
@@ -585,7 +605,10 @@ export function createServer(): McpServer {
           : config.localeDirs.filter(d => !d.aliasOf)
 
         if (layersToScan.length === 0) {
-          throw new Error(layer ? `Layer not found: ${layer}` : 'No locale directories found')
+          if (layer) {
+            throw new ToolError(`Layer not found: "${layer}". Available: ${config.localeDirs.map(d => d.layer).join(', ')}. Use list_locale_dirs to see all layers.`, 'LAYER_NOT_FOUND')
+          }
+          throw new ToolError('No locale directories found. Run detect_i18n_config to verify the project setup.', 'LAYER_NOT_FOUND')
         }
 
         const result: Record<string, Record<string, string[]>> = {}
@@ -656,7 +679,9 @@ export function createServer(): McpServer {
           content: [
             {
               type: 'text' as const,
-              text: `Error finding missing translations: ${error instanceof Error ? error.message : String(error)}`,
+              text: error instanceof ToolError
+                ? `[${error.code}] ${error.message}`
+                : `Error finding missing translations: ${error instanceof Error ? error.message : String(error)}`,
             },
           ],
           isError: true,
@@ -695,7 +720,10 @@ export function createServer(): McpServer {
           : config.localeDirs.filter(d => !d.aliasOf)
 
         if (layersToSearch.length === 0) {
-          throw new Error(layer ? `Layer not found: ${layer}` : 'No locale directories found')
+          if (layer) {
+            throw new ToolError(`Layer not found: "${layer}". Available: ${config.localeDirs.map(d => d.layer).join(', ')}. Use list_locale_dirs to see all layers.`, 'LAYER_NOT_FOUND')
+          }
+          throw new ToolError('No locale directories found. Run detect_i18n_config to verify the project setup.', 'LAYER_NOT_FOUND')
         }
 
         // Determine locales to search
@@ -703,7 +731,7 @@ export function createServer(): McpServer {
           ? (() => {
               const found = findLocale(config, locale)
               if (!found) {
-                throw new Error(`Locale not found: ${locale}. Available: ${config.locales.map(l => l.code).join(', ')}`)
+                throw new ToolError(`Locale not found: "${locale}". Available: ${config.locales.map(l => l.code).join(', ')}. Use one of the available locale codes or file names.`, 'LOCALE_NOT_FOUND')
               }
               return [found]
             })()
@@ -762,7 +790,9 @@ export function createServer(): McpServer {
           content: [
             {
               type: 'text' as const,
-              text: `Error searching translations: ${error instanceof Error ? error.message : String(error)}`,
+              text: error instanceof ToolError
+                ? `[${error.code}] ${error.message}`
+                : `Error searching translations: ${error instanceof Error ? error.message : String(error)}`,
             },
           ],
           isError: true,
@@ -802,10 +832,10 @@ export function createServer(): McpServer {
 
         const localeDir = config.localeDirs.find(d => d.layer === layer)
         if (!localeDir) {
-          throw new Error(`Layer not found: ${layer}. Available: ${config.localeDirs.map(d => d.layer).join(', ')}`)
+          throw new ToolError(`Layer not found: "${layer}". Available: ${config.localeDirs.map(d => d.layer).join(', ')}. Use list_locale_dirs to see all layers.`, 'LAYER_NOT_FOUND')
         }
         if (localeDir.aliasOf) {
-          throw new Error(`Layer '${layer}' is an alias of '${localeDir.aliasOf}'. Modify the source layer instead.`)
+          throw new ToolError(`Layer "${layer}" is an alias of "${localeDir.aliasOf}". Modify the source layer "${localeDir.aliasOf}" instead.`, 'LAYER_IS_ALIAS')
         }
 
         const preview: Array<{ locale: string; key: string; oldValue: unknown }> = []
@@ -882,7 +912,9 @@ export function createServer(): McpServer {
           content: [
             {
               type: 'text' as const,
-              text: `Error removing translations: ${error instanceof Error ? error.message : String(error)}`,
+              text: error instanceof ToolError
+                ? `[${error.code}] ${error.message}`
+                : `Error removing translations: ${error instanceof Error ? error.message : String(error)}`,
             },
           ],
           isError: true,
@@ -920,15 +952,15 @@ export function createServer(): McpServer {
         const isDryRun = dryRun ?? false
 
         if (oldKey === newKey) {
-          throw new Error('Old key and new key are the same.')
+          throw new ToolError(`Old key and new key are the same: "${oldKey}". Provide a different newKey to rename to.`, 'SAME_KEY')
         }
 
         const localeDir = config.localeDirs.find(d => d.layer === layer)
         if (!localeDir) {
-          throw new Error(`Layer not found: ${layer}. Available: ${config.localeDirs.map(d => d.layer).join(', ')}`)
+          throw new ToolError(`Layer not found: "${layer}". Available: ${config.localeDirs.map(d => d.layer).join(', ')}. Use list_locale_dirs to see all layers.`, 'LAYER_NOT_FOUND')
         }
         if (localeDir.aliasOf) {
-          throw new Error(`Layer '${layer}' is an alias of '${localeDir.aliasOf}'. Modify the source layer instead.`)
+          throw new ToolError(`Layer "${layer}" is an alias of "${localeDir.aliasOf}". Modify the source layer "${localeDir.aliasOf}" instead.`, 'LAYER_IS_ALIAS')
         }
 
         const preview: Array<{ locale: string; oldKey: string; newKey: string; value: unknown }> = []
@@ -1025,7 +1057,9 @@ export function createServer(): McpServer {
           content: [
             {
               type: 'text' as const,
-              text: `Error renaming translation key: ${error instanceof Error ? error.message : String(error)}`,
+              text: error instanceof ToolError
+                ? `[${error.code}] ${error.message}`
+                : `Error renaming translation key: ${error instanceof Error ? error.message : String(error)}`,
             },
           ],
           isError: true,
@@ -1066,23 +1100,23 @@ export function createServer(): McpServer {
         // Validate layer
         const localeDir = config.localeDirs.find(d => d.layer === layer)
         if (!localeDir) {
-          throw new Error(`Layer not found: ${layer}. Available: ${config.localeDirs.map(d => d.layer).join(', ')}`)
+          throw new ToolError(`Layer not found: "${layer}". Available: ${config.localeDirs.map(d => d.layer).join(', ')}. Use list_locale_dirs to see all layers.`, 'LAYER_NOT_FOUND')
         }
         if (localeDir.aliasOf) {
-          throw new Error(`Layer '${layer}' is an alias of '${localeDir.aliasOf}'. Modify the source layer instead.`)
+          throw new ToolError(`Layer "${layer}" is an alias of "${localeDir.aliasOf}". Modify the source layer "${localeDir.aliasOf}" instead.`, 'LAYER_IS_ALIAS')
         }
 
         // Determine reference locale
         const refCode = referenceLocale ?? config.defaultLocale
         const refLocale = findLocale(config, refCode)
         if (!refLocale) {
-          throw new Error(`Reference locale not found: ${refCode}. Available: ${config.locales.map(l => l.code).join(', ')}`)
+          throw new ToolError(`Reference locale not found: "${refCode}". Available: ${config.locales.map(l => l.code).join(', ')}. Pass a valid locale code as referenceLocale, or omit it to use the project default.`, 'REFERENCE_LOCALE_NOT_FOUND')
         }
 
         // Read reference locale file
         const refFilePath = resolveLocaleFilePath(config, layer, refLocale.file)
         if (!refFilePath) {
-          throw new Error(`No locale file found for reference locale '${refCode}' in layer '${layer}'.`)
+          throw new ToolError(`No locale file found for reference locale "${refCode}" in layer "${layer}". Verify the layer exists and contains a file for this locale using list_locale_dirs.`, 'NO_LOCALE_FILE')
         }
         const refData = await readLocaleFile(refFilePath)
         const allRefKeys = getLeafKeys(refData)
@@ -1092,7 +1126,7 @@ export function createServer(): McpServer {
           ? targetLocales.map((code) => {
               const loc = findLocale(config, code)
               if (!loc) {
-                throw new Error(`Target locale not found: ${code}. Available: ${config.locales.map(l => l.code).join(', ')}`)
+                throw new ToolError(`Target locale not found: "${code}". Available: ${config.locales.map(l => l.code).join(', ')}. Pass valid locale codes in targetLocales.`, 'LOCALE_NOT_FOUND')
               }
               return loc
             })
@@ -1266,7 +1300,9 @@ export function createServer(): McpServer {
           content: [
             {
               type: 'text' as const,
-              text: `Error translating missing keys: ${error instanceof Error ? error.message : String(error)}`,
+              text: error instanceof ToolError
+                ? `[${error.code}] ${error.message}`
+                : `Error translating missing keys: ${error instanceof Error ? error.message : String(error)}`,
             },
           ],
           isError: true,

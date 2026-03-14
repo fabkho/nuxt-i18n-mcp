@@ -130,3 +130,51 @@ export function renameNestedKey(
   setNestedValue(obj, newPath, value)
   return true
 }
+
+/**
+ * Validate a translation value. Returns a warning message if problematic, null if OK.
+ * This is soft validation — callers should warn but not block.
+ */
+export function validateTranslationValue(value: unknown): string | null {
+  if (typeof value !== 'string') {
+    return `Value must be a string, got ${typeof value}`
+  }
+
+  // Check for unbalanced placeholder braces
+  const openBraces = (value.match(/\{/g) || []).length
+  const closeBraces = (value.match(/\}/g) || []).length
+  if (openBraces !== closeBraces) {
+    return `Unbalanced placeholder braces: ${openBraces} opening vs ${closeBraces} closing in "${value}"`
+  }
+
+  // Check for malformed linked references
+  if (value.includes('@:') && /@:\s*$/.test(value)) {
+    return `Malformed linked reference: "@:" at end of string with no target`
+  }
+
+  return null
+}
+
+/**
+ * Get statistics about a translation value's complexity.
+ */
+export function getTranslationStats(value: string): {
+  placeholders: string[]
+  linkedRefs: string[]
+  hasPluralPipe: boolean
+  hasHtml: boolean
+} {
+  // Extract {placeholder} tokens
+  const placeholders = [...value.matchAll(/\{([^}]+)\}/g)].map(m => m[1])
+
+  // Extract @:linked.ref references
+  const linkedRefs = [...value.matchAll(/@:(?:\{'[^']+'\}|[\w.]+)/g)].map(m => m[0])
+
+  // Check for plural pipe separator
+  const hasPluralPipe = / \| /.test(value)
+
+  // Check for HTML tags
+  const hasHtml = /<\/?[a-zA-Z]/.test(value)
+
+  return { placeholders, linkedRefs, hasPluralPipe, hasHtml }
+}

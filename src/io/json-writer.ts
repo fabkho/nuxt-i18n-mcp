@@ -3,7 +3,7 @@ import { dirname, join } from 'node:path'
 import { randomUUID } from 'node:crypto'
 import { FileIOError } from '../utils/errors.js'
 import { sortKeysDeep } from './key-operations.js'
-import { detectIndentation, readLocaleFileWithMeta } from './json-reader.js'
+import { clearFileCacheEntry, detectIndentation, readLocaleFileWithMeta } from './json-reader.js'
 
 export interface WriteOptions {
   /** Indentation string. If not provided, auto-detected from existing file. */
@@ -45,6 +45,7 @@ export async function writeLocaleFile(
     try {
       await writeFile(tmpPath, content, 'utf-8')
       await rename(tmpPath, filePath)
+      clearFileCacheEntry(filePath)
     } catch (error) {
       // Clean up temp file on failure (best-effort)
       try {

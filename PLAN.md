@@ -701,46 +701,49 @@ No API keys. No env vars. The server auto-detects everything from the project's 
 - [x] stdio transport entry point
 - [x] Unit tests for key operations and JSON writer
 - [x] Playground with root + app-admin layer for integration testing
-- [x] Integration tests for config detection against playground (57 tests passing)
-- [ ] MCP Inspector manual testing
+- [x] Integration tests for config detection against playground
+- [x] MCP Inspector manual testing
 - [ ] README with setup instructions
 
-### Phase 2 — Analysis, Search & Project Config
+### Phase 2 — Analysis, Search & Project Config ✅
 **Goal:** Agent can find gaps, search translations, and use project-specific context.
 
-- [ ] **Project config** (`project-config.ts`): read `.i18n-mcp.json`, validate, include in `detect_i18n_config` response
-- [ ] **Types**: add `ProjectConfig` interface to `types.ts`
-- [ ] Tools: `get_missing_translations`, `search_translations`
-- [ ] Resources: locale file resource templates
-- [ ] Tests for missing key detection
-- [ ] Tests for project config loading (with and without `.i18n-mcp.json`)
-- [ ] Playground: add `.i18n-mcp.json` example to playground
+- [x] **Project config** (`project-config.ts`): read `.i18n-mcp.json`, validate, include in `detect_i18n_config` response
+- [x] **Types**: add `ProjectConfig` interface to `types.ts`
+- [x] Tools: `get_missing_translations`, `search_translations`
+- [x] Resources: locale file resource template (`i18n:///{layer}/{file}`)
+- [x] Tests for missing key detection
+- [x] Tests for project config loading (with and without `.i18n-mcp.json`)
+- [x] Playground: add `.i18n-mcp.json` example to playground
 
-### Phase 3 — Refactoring & Cleanup
+### Phase 3 — Refactoring & Cleanup ✅
 **Goal:** Agent can safely restructure i18n keys.
 
-- [ ] Tools: `remove_translations`, `rename_translation_key`
-- [ ] Safety: return preview of changes before writing (agent confirms with user)
-- [ ] Tests for remove/rename across all locales
+- [x] Tools: `remove_translations`, `rename_translation_key`
+- [x] Safety: dry-run preview mode (`dryRun: true`) for both tools
+- [x] Conflict detection for rename (new key already exists)
+- [x] Alias layer rejection with helpful error
+- [x] Tests for remove/rename across all locales
 
-### Phase 4 — Auto-Translation
+### Phase 4 — Auto-Translation ✅
 **Goal:** Agent can fill in missing locales automatically, using project context.
 
-- [ ] Tool: `translate_missing` — MCP sampling integration
-- [ ] **Sampling prompt assembly**: prepend `translationPrompt`, `glossary`, `localeNotes`, `examples` from project config
-- [ ] **Fallback**: when sampling unsupported, return keys + project config context for agent to translate inline
-- [ ] Batch chunking logic (50 keys per sampling request)
-- [ ] Prompts: `add-feature-translations`, `fix-missing-translations`
+- [x] Tool: `translate_missing` — MCP sampling integration (VS Code) + fallback (Zed, others)
+- [x] **Sampling prompt assembly**: prepend `translationPrompt`, `glossary`, `localeNotes`, `examples` from project config
+- [x] **Fallback**: when sampling unsupported, return keys + project config context for agent to translate inline
+- [x] Batch chunking logic (default 50 keys per sampling request, configurable)
+- [x] Prompts: `add-feature-translations`, `fix-missing-translations`
 
-### Phase 5 — Polish
+### Phase 5 — Polish (in progress)
 **Goal:** Production-ready, team-wide rollout.
 
-- [ ] Comprehensive error messages with actionable hints
-- [ ] Performance: lazy-load locale files, cache parsed JSON, avoid re-reading unchanged files
-- [ ] Handle edge cases: `@:` linked messages, `{param}` placeholders, HTML in values
-- [ ] BabelEdit compatibility validation (ensure written JSON is cleanly importable)
-- [ ] Auto-detect indentation style per file (tabs vs spaces) and preserve it
+- [x] Comprehensive error messages with actionable hints (`ToolError` with structured error codes)
+- [x] Performance: file-level caching for parsed JSON (mtime-based invalidation)
+- [x] Handle edge cases: `validateTranslationValue()` + `getTranslationStats()` for `@:` linked messages, `{param}` placeholders, HTML, pluralization pipes
+- [x] BabelEdit compatibility (sorted keys, consistent formatting, valid JSON)
+- [x] Auto-detect indentation style per file (tabs vs spaces, 2-space vs 4-space) and preserve it
 - [ ] `.i18n-mcp.json` JSON schema for IDE autocompletion
+- [ ] README with setup instructions
 - [ ] Team documentation and onboarding guide
 
 ---
@@ -925,7 +928,7 @@ The MCP spec has a [SEP for nested task execution](https://modelcontextprotocol.
 ### Other Backlog Items
 
 - **`move_translations`** — Move keys between layers (e.g., promote app-specific key to `common.*`)
-- **Dry-run mode** — For destructive tools (`remove_translations`, `rename_translation_key`), return a preview of changes without writing, requiring a second confirmation call
+- **Dry-run mode** — ✅ Implemented for `remove_translations`, `rename_translation_key`, and `translate_missing` via `dryRun: true` parameter
 - **File watching** — Notify the agent when locale files change on disk (via MCP `notifications/resources/updated`)
 - **Translation memory** — Cache previous translations to ensure consistency when the same phrase appears in multiple places
 - **Pluralization support** — Handle vue-i18n plural forms (`{ count } item | { count } items`)
@@ -933,3 +936,4 @@ The MCP spec has a [SEP for nested task execution](https://modelcontextprotocol.
 - **`.i18n-mcp.json` JSON Schema** — Publish a JSON Schema so IDEs provide autocompletion and validation when editing the config file
 - **Glossary validation** — Tool that checks existing translations against the glossary and reports inconsistencies (e.g., "fr-FR uses 'Réservation' but glossary says 'Booking' should be used")
 - **Auto-generate `.i18n-mcp.json`** — Tool that analyzes existing translations and proposes a glossary, layer rules, and examples based on patterns found
+- **Flat JSON support** — vue-i18n supports `flatJson: true` in its config, which uses dot-separated keys in a flat object instead of nested JSON (e.g., `{ "common.actions.save": "Save" }` instead of `{ "common": { "actions": { "save": "Save" } } }`). Detect this from the i18n config and support reading/writing flat JSON files alongside nested ones.

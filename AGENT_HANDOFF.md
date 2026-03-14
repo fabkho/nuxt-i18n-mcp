@@ -8,49 +8,96 @@ An MCP (Model Context Protocol) server that gives AI coding agents structured to
 **SDK:** TypeScript MCP SDK (`@modelcontextprotocol/sdk`)
 **Build:** tsdown, pnpm, vitest
 
-## Key Files to Read First
+## Current State
 
-1. **`PLAN.md`** — The full implementation plan. Sections 4-6 are the most important (config detection, JSON I/O, tool specs). Section 12 has the phase breakdown with checkboxes.
-2. **`src/server.ts`** — The MCP server with all 5 Phase 1 tools registered (detect_i18n_config, list_locale_dirs, get_translations, add_translations, update_translations).
-3. **`src/config/detector.ts`** — Config auto-detection via `@nuxt/kit` `loadNuxt()`. This is the core innovation — it resolves the full Nuxt config including layers.
-4. **`src/config/types.ts`** — `I18nConfig`, `LocaleDefinition`, `LocaleDir` type definitions.
-5. **`src/io/key-operations.ts`** — Nested JSON manipulation via dot-paths (get/set/remove/rename/sort).
-6. **`playground/`** — A real Nuxt 4 project with `@nuxtjs/i18n`, a root layer (4 locales, `common.*` keys) and an `app-admin` layer (admin-specific keys). Spanish locale in app-admin intentionally has missing keys for testing.
+Phases 1–4 are complete. Phase 5 (polish) is in progress with items 1–5 done.
 
-## What's Done (Phase 1 ✅)
+- **10 tools**, **2 prompts**, **1 resource template**
+- **141 tests** across 8 test files
+- Build produces single `dist/index.js` (~60KB)
+- Tested with MCP Inspector, Zed (tools + prompts), and VS Code (tools + prompts + sampling)
 
-- MCP server with stdio transport, 5 tools
-- Config auto-detection via `@nuxt/kit` (project-agnostic — works with any `@nuxtjs/i18n` setup)
-- Layer discovery from `nuxt.options._layers` (handles root + app layers, aliased dirs)
-- JSON reader/writer with format preservation (detects indent style, atomic writes, alphabetical key sorting)
-- Key operations (get/set/remove/rename on nested JSON via dot-paths)
-- Playground with root + app-admin layer
-- **57 tests passing** (unit + integration against playground)
-- Build produces single `dist/index.js` (21KB)
+## Project Structure
 
-## What's Next (Phase 2)
+```
+src/
+├── index.ts                  # Entry point — stdio transport
+├── server.ts                 # MCP server — all tools, prompts, resources registered here
+├── config/
+│   ├── detector.ts           # Config auto-detection via @nuxt/kit loadNuxt()
+│   ├── nuxt-loader.ts        # Dynamic @nuxt/kit import from project's node_modules
+│   ├── project-config.ts     # .i18n-mcp.json loader and validator
+│   └── types.ts              # I18nConfig, LocaleDefinition, LocaleDir, ProjectConfig
+├── io/
+│   ├── json-reader.ts        # JSON file reader with mtime-based caching
+│   ├── json-writer.ts        # Atomic JSON writer with format preservation
+│   └── key-operations.ts     # Nested JSON manipulation via dot-paths
+└── utils/
+    ├── errors.ts             # ConfigError, FileIOError, ToolError
+    └── logger.ts             # All output to stderr (never stdout)
 
-Phase 2 is "Analysis, Search & Project Config." See `PLAN.md` Section 12 for the full checklist. The key items:
+tests/
+├── config/
+│   ├── detector.test.ts      # Integration tests against playground (14 tests)
+│   └── project-config.test.ts # .i18n-mcp.json loading/validation (8 tests)
+├── io/
+│   ├── json-reader.test.ts   # Indentation detection (8 tests)
+│   ├── json-writer.test.ts   # Write, mutate, format preservation (13 tests)
+│   └── key-operations.test.ts # get/set/remove/rename/sort on nested objects (30 tests)
+└── tools/
+    ├── missing-and-search.test.ts    # get_missing + search logic (15 tests)
+    ├── remove-and-rename.test.ts     # remove + rename across locales (24 tests)
+    └── translate-and-prompts.test.ts # translate_missing + prompt assembly (29 tests)
 
-### 1. Project Config (`.i18n-mcp.json`) — Section 4.8 in PLAN.md
-An optional JSON file at the project root that provides agent context: `layerRules` (which layer does a key belong to?), `glossary` (consistent terminology), `translationPrompt` (tone/style), `localeNotes` (per-locale context like formal/informal), and `examples` (few-shot translation style).
+playground/                   # Real Nuxt 4 project for integration testing
+├── nuxt.config.ts            # Root layer: 4 locales (de, en, fr, es)
+├── i18n/locales/             # Root locale files (common.* namespace)
+├── .i18n-mcp.json            # Example project config
+└── app-admin/                # App layer extending root
+    ├── nuxt.config.ts        # extends: ['../']
+    └── i18n/locales/         # Admin locale files (admin.* namespace)
+                              # es-ES intentionally missing admin.users.* keys
+```
 
-**To implement:**
-- Create `src/config/project-config.ts` — read and validate `.i18n-mcp.json`
-- Add `ProjectConfig` interface to `src/config/types.ts`
-- Update `detector.ts` to look for `.i18n-mcp.json` and include it in the `I18nConfig` response
-- Update `detect_i18n_config` tool in `server.ts` to return `projectConfig`
-- Add `.i18n-mcp.json` example to playground
-- Tests for loading with and without the config file
+## Tools (10)
 
-### 2. Tool: `get_missing_translations`
-Compare locale files across layers to find keys present in the reference locale but missing in others. See Section 6.4 in PLAN.md.
+| Tool | Purpose | Phase |
+|------|---------|-------|
+| `detect_i18n_config` | Load Nuxt config, return locales, layers, project config | 1 |
+| `list_locale_dirs` | List locale directories with file counts and top-level keys | 1 |
+| `get_translations` | Read values for dot-path keys from a layer/locale | 1 |
+| `add_translations` | Add new keys across locales (fails if key exists) | 1 |
+| `update_translations` | Update existing keys (fails if key doesn't exist) | 1 |
+| `get_missing_translations` | Find keys in reference locale missing from targets | 2 |
+| `search_translations` | Search by key pattern or value substring | 2 |
+| `remove_translations` | Remove keys from all locales in a layer (dry-run support) | 3 |
+| `rename_translation_key` | Rename/move a key across all locales (dry-run + conflict detection) | 3 |
+| `translate_missing` | Auto-translate via MCP sampling, fallback for non-sampling hosts | 4 |
 
-### 3. Tool: `search_translations`
-Search by key pattern or value substring across all locale files. See Section 6.10 in PLAN.md.
+## Prompts (2)
 
-### 4. MCP Resources
-Expose locale files as MCP resources (`i18n:///root/en-US.json`). See Section 7 in PLAN.md.
+| Prompt | Purpose |
+|--------|---------|
+| `add-feature-translations` | Guided workflow for adding translations for a new feature |
+| `fix-missing-translations` | Find and fix all translation gaps across the project |
+
+Both prompts include project config context (glossary, layer rules, examples) when available.
+
+## Resources (1)
+
+| Template | Purpose |
+|----------|---------|
+| `i18n:///{layer}/{file}` | Browse/read locale JSON files. Requires `detect_i18n_config` to be called first. |
+
+## Key Files to Read
+
+1. **`src/server.ts`** — Start here. All 10 tools, 2 prompts, 1 resource template. Also contains prompt assembly helpers (`buildTranslationSystemPrompt`, `buildTranslationUserMessage`, `buildFallbackContext`).
+2. **`src/config/detector.ts`** — Config auto-detection via `@nuxt/kit` `loadNuxt()`. Resolves the full Nuxt config including layers. Caches result by `projectDir`. Calls `loadProjectConfig()` for `.i18n-mcp.json`.
+3. **`src/config/types.ts`** — All type definitions: `I18nConfig`, `LocaleDefinition`, `LocaleDir`, `ProjectConfig`.
+4. **`src/io/key-operations.ts`** — Nested JSON manipulation: `getNestedValue`, `setNestedValue`, `removeNestedValue`, `renameNestedKey`, `hasNestedKey`, `getLeafKeys`, `sortKeysDeep`, `validateTranslationValue`, `getTranslationStats`.
+5. **`src/io/json-reader.ts`** — JSON reading with mtime-based file cache. `detectIndentation()` for format preservation.
+6. **`src/io/json-writer.ts`** — Atomic writes (temp file + rename), alphabetical key sorting, format preservation. Invalidates reader cache on write.
+7. **`PLAN.md`** — Full implementation plan. Section 12 has phase checkboxes. Sections 4–6 cover config detection, JSON I/O, and tool specs.
 
 ## Important Architectural Notes
 
@@ -58,13 +105,40 @@ Expose locale files as MCP resources (`i18n:///root/en-US.json`). See Section 7 
 - **Locales are duplicated across layers intentionally.** Both root and app layers define the same locale codes. Each layer has its own JSON files with different key namespaces. The agent decides which layer to write to.
 - **The server is project-agnostic.** It uses `@nuxt/kit` `loadNuxt()` to resolve config, not regex parsing. No hardcoded paths.
 - **Config detection is cached.** `detectI18nConfig()` caches by `projectDir`. Call `clearConfigCache()` to reset.
+- **File reads are cached.** `readLocaleFile()` caches by file path + mtime. Cache is invalidated automatically on writes. Call `clearFileCache()` to reset.
+- **Resources require prior config detection.** The resource template uses `getCachedConfig()` — returns empty list if `detect_i18n_config` hasn't been called yet.
 - **Layer naming:** When pointing at `app-admin/`, it becomes `'root'` (the project entry point) and the extended parent becomes `'playground'` (basename of its dir). This is the `deriveLayerName()` function in `detector.ts`.
+- **Sampling support varies by host.** VS Code supports MCP sampling (`createMessage()`). Zed does not (as of July 2025). The `translate_missing` tool detects this at runtime via `clientCapabilities.sampling` and falls back to returning context for the agent to translate inline.
+- **Error codes.** Tool errors use `ToolError` with structured codes: `LOCALE_NOT_FOUND`, `LAYER_NOT_FOUND`, `LAYER_IS_ALIAS`, `SAME_KEY`, `REFERENCE_LOCALE_NOT_FOUND`, `NO_LOCALE_FILE`. These appear as `[CODE] message` in error responses.
+- **Soft validation on writes.** `add_translations` and `update_translations` call `validateTranslationValue()` and include warnings (unbalanced placeholders, malformed linked refs) in the response without blocking the write.
+
+## Playground Test Data
+
+- **Root layer** (`playground/i18n/locales/`): 4 locales (de-DE, en-US, fr-FR, es-ES), all complete with identical `common.actions.*`, `common.messages.*`, `common.navigation.*` keys.
+- **App-admin layer** (`playground/app-admin/i18n/locales/`): 4 locales with `admin.dashboard.*` and `admin.users.*` keys. **es-ES intentionally missing `admin.users.*`** (3 keys) for testing `get_missing_translations` and `translate_missing`.
+- **`.i18n-mcp.json`** at playground root: example project config with layer rules, glossary, translation prompt, locale notes, and a few-shot example.
+
+## What's Left (Phase 5 remaining + backlog)
+
+### Phase 5 — remaining items
+- [ ] `.i18n-mcp.json` JSON schema for IDE autocompletion
+- [ ] README with setup instructions
+- [ ] Team documentation and onboarding guide
+
+### Backlog (see PLAN.md Section 18)
+- `move_translations` — move keys between layers
+- File watching — notify agent when locale files change on disk
+- Translation memory — cache previous translations for consistency
+- Key usage analysis — scan Vue/TS source for unused keys
+- Glossary validation — check translations against glossary
+- Auto-generate `.i18n-mcp.json` — propose glossary/rules from existing translations
+- Flat JSON support — `flatJson: true` in vue-i18n config
 
 ## Commands
 
 ```sh
 pnpm build          # Build via tsdown → dist/index.js
-pnpm test           # Run all 57 tests
+pnpm test           # Run all 141 tests
 pnpm typecheck      # tsc --noEmit
 pnpm start          # Start the MCP server on stdio
 pnpm inspect        # Open MCP Inspector for manual testing
