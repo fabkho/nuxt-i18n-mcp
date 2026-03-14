@@ -1,9 +1,9 @@
 import { writeFile, rename, mkdir } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 import { randomUUID } from 'node:crypto'
-import { FileIOError } from '../utils/errors.js'
-import { sortKeysDeep } from './key-operations.js'
-import { clearFileCacheEntry, detectIndentation, readLocaleFileWithMeta } from './json-reader.js'
+import { FileIOError } from '../utils/errors'
+import { sortKeysDeep } from './key-operations'
+import { clearFileCacheEntry, readLocaleFileWithMeta } from './json-reader'
 
 export interface WriteOptions {
   /** Indentation string. If not provided, auto-detected from existing file. */
@@ -16,9 +16,10 @@ export interface WriteOptions {
 
 /**
  * Write a JSON object to a locale file.
- * - Preserves formatting (auto-detects indent from existing file if not specified)
  * - Sorts keys alphabetically at every nesting level by default
  * - Uses atomic write (write to temp file, then rename)
+ * - The \t default for indent is a fallback for new files; existing files
+ *   get their indent auto-detected via mutateLocaleFile → readLocaleFileWithMeta.
  */
 export async function writeLocaleFile(
   filePath: string,
@@ -68,6 +69,7 @@ export async function writeLocaleFile(
 /**
  * Read a locale file, apply a mutation function, and write it back.
  * Preserves the file's original formatting (indent style, trailing newline).
+ * This is the primary write entry point used by all tools in server.ts.
  */
 export async function mutateLocaleFile(
   filePath: string,
