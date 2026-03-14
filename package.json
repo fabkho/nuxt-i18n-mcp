@@ -16,6 +16,7 @@
     "dev": "tsdown --watch",
     "start": "node dist/index.js",
     "test": "vitest run",
+    "test:perf": "vitest run tests/perf/",
     "test:watch": "vitest",
     "lint": "eslint src/",
     "typecheck": "tsc --noEmit",
