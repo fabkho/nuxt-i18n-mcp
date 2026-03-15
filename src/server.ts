@@ -593,24 +593,30 @@ export function createServer(): McpServer {
             continue
           }
 
-          const refKeys = getLeafKeys(refData)
+          // Only consider ref keys that have non-empty values
+          const refKeys = getLeafKeys(refData).filter(k => {
+            const v = getNestedValue(refData, k)
+            return typeof v === 'string' ? v.length > 0 : v !== null && v !== undefined
+          })
           if (refKeys.length === 0) continue
 
           for (const target of targets) {
             const targetFilePath = resolveLocaleFilePath(config, localeDir.layer, target.file)
-            let targetKeys: string[] = []
+            let targetData: Record<string, unknown> = {}
 
             if (targetFilePath) {
               try {
-                const targetData = await readLocaleFile(targetFilePath)
-                targetKeys = getLeafKeys(targetData)
+                targetData = await readLocaleFile(targetFilePath)
               } catch {
                 // Target file doesn't exist — all ref keys are missing
               }
             }
 
-            const targetKeySet = new Set(targetKeys)
-            const missing = refKeys.filter(k => !targetKeySet.has(k))
+            // A key is missing if it doesn't exist OR its value is an empty string
+            const missing = refKeys.filter(k => {
+              const v = getNestedValue(targetData, k)
+              return v === undefined || v === '' || v === null
+            })
 
             if (missing.length > 0) {
               if (!result[target.code]) {
@@ -1045,7 +1051,11 @@ export function createServer(): McpServer {
           throw new ToolError(`No locale file found for reference locale "${refCode}" in layer "${layer}". Verify the layer exists and contains a file for this locale using list_locale_dirs.`, 'NO_LOCALE_FILE')
         }
         const refData = await readLocaleFile(refFilePath)
-        const allRefKeys = getLeafKeys(refData)
+        // Only consider ref keys that have non-empty values
+        const allRefKeys = getLeafKeys(refData).filter(k => {
+          const v = getNestedValue(refData, k)
+          return typeof v === 'string' ? v.length > 0 : v !== null && v !== undefined
+        })
 
         // Determine target locales
         const targets = targetLocales
@@ -1077,16 +1087,19 @@ export function createServer(): McpServer {
             }
           }
 
-          const targetKeys = getLeafKeys(targetData)
-          const targetKeySet = new Set(targetKeys)
+          // A key is missing if it doesn't exist OR its value is an empty string
+          const isKeyMissing = (k: string): boolean => {
+            const v = getNestedValue(targetData, k)
+            return v === undefined || v === '' || v === null
+          }
 
           // Determine which keys need translation
           let missingKeys: string[]
           if (keys) {
             // Only translate specified keys that are actually missing
-            missingKeys = keys.filter(k => !targetKeySet.has(k) && allRefKeys.includes(k))
+            missingKeys = keys.filter(k => isKeyMissing(k) && allRefKeys.includes(k))
           } else {
-            missingKeys = allRefKeys.filter(k => !targetKeySet.has(k))
+            missingKeys = allRefKeys.filter(k => isKeyMissing(k))
           }
 
           if (missingKeys.length === 0) {

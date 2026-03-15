@@ -75,7 +75,7 @@ describe('get_missing_translations logic', () => {
       expect(missing).toHaveLength(3)
     })
 
-    it('fr-FR in app-admin has no missing keys compared to de-DE', async () => {
+    it('fr-FR in app-admin has no missing keys compared to de-DE (by key existence)', async () => {
       const rootLayer = config.localeDirs.find(d => d.layer === 'root')!
 
       const deData = await readLocaleFile(join(rootLayer.path, 'de-DE.json'))
@@ -87,6 +87,29 @@ describe('get_missing_translations logic', () => {
       const missing = deKeys.filter(k => !frKeys.includes(k))
 
       expect(missing).toHaveLength(0)
+    })
+
+    it('treats empty-string values as missing translations', async () => {
+      // fr-FR has admin.users.edit set to "" — should be detected as missing
+      const rootLayer = config.localeDirs.find(d => d.layer === 'root')!
+
+      const deData = await readLocaleFile(join(rootLayer.path, 'de-DE.json'))
+      const frData = await readLocaleFile(join(rootLayer.path, 'fr-FR.json'))
+
+      // Filter ref keys to non-empty values (same logic as the tool)
+      const refKeys = getLeafKeys(deData).filter(k => {
+        const v = getNestedValue(deData, k)
+        return typeof v === 'string' ? v.length > 0 : v !== null && v !== undefined
+      })
+
+      // A key is missing if it doesn't exist OR its value is empty
+      const missing = refKeys.filter(k => {
+        const v = getNestedValue(frData, k)
+        return v === undefined || v === '' || v === null
+      })
+
+      expect(missing).toContain('admin.users.edit')
+      expect(missing).toHaveLength(1)
     })
 
     it('also detects extra keys not in the reference locale', async () => {

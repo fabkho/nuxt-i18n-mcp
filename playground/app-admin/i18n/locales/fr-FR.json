@@ -7,7 +7,7 @@
     "users": {
       "list": "Liste des utilisateurs",
       "create": "Créer un utilisateur",
-      "edit": "Modifier un utilisateur"
+      "edit": ""
     }
   }
 }
