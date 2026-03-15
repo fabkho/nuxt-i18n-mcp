@@ -1,6 +1,6 @@
-import { describe, it, expect, beforeAll, afterAll } from 'vitest'
+import { describe, it, expect, vi, beforeAll, afterAll } from 'vitest'
 import { resolve, join } from 'node:path'
-import { detectI18nConfig, clearConfigCache } from '../../src/config/detector.js'
+import { createPlaygroundConfig, createAppAdminConfig } from '../fixtures/config.js'
 import { readLocaleFile } from '../../src/io/json-reader.js'
 import { getLeafKeys, getNestedValue } from '../../src/io/key-operations.js'
 import type { I18nConfig } from '../../src/config/types.js'
@@ -8,13 +8,39 @@ import type { I18nConfig } from '../../src/config/types.js'
 const playgroundDir = resolve(import.meta.dirname, '../../playground')
 const appAdminDir = resolve(import.meta.dirname, '../../playground/app-admin')
 
+// Mock the detector so we never call loadNuxt
+vi.mock('../../src/config/detector.js', async (importOriginal) => {
+  const original = await importOriginal<typeof import('../../src/config/detector.js')>()
+  let cached: I18nConfig | null = null
+  return {
+    ...original,
+    detectI18nConfig: vi.fn(async (projectDir: string) => {
+      if (projectDir === playgroundDir) {
+        cached = createPlaygroundConfig()
+        return cached
+      }
+      if (projectDir === appAdminDir) {
+        cached = createAppAdminConfig()
+        return cached
+      }
+      throw new Error(`No fixture config for ${projectDir}`)
+    }),
+    clearConfigCache: vi.fn(() => {
+      cached = null
+    }),
+    getCachedConfig: vi.fn(() => cached),
+  }
+})
+
+const { detectI18nConfig, clearConfigCache } = await import('../../src/config/detector.js')
+
 describe('get_missing_translations logic', () => {
   describe('app-admin', () => {
     let config: I18nConfig
 
     beforeAll(async () => {
       config = await detectI18nConfig(appAdminDir)
-    }, 30_000)
+    })
 
     afterAll(() => {
       clearConfigCache()
@@ -133,7 +159,7 @@ describe('get_missing_translations logic', () => {
 
     beforeAll(async () => {
       config = await detectI18nConfig(playgroundDir)
-    }, 30_000)
+    })
 
     afterAll(() => {
       clearConfigCache()
@@ -185,7 +211,7 @@ describe('search_translations logic', () => {
 
     beforeAll(async () => {
       config = await detectI18nConfig(playgroundDir)
-    }, 30_000)
+    })
 
     afterAll(() => {
       clearConfigCache()
@@ -297,7 +323,7 @@ describe('search_translations logic', () => {
 
     beforeAll(async () => {
       config = await detectI18nConfig(appAdminDir)
-    }, 30_000)
+    })
 
     afterAll(() => {
       clearConfigCache()

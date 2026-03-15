@@ -1,8 +1,8 @@
-import { describe, it, expect, afterEach, beforeEach, beforeAll, afterAll } from 'vitest'
+import { describe, it, expect, vi, afterEach, beforeEach, beforeAll, afterAll } from 'vitest'
 import { resolve, join } from 'node:path'
 import { cp, rm, mkdir } from 'node:fs/promises'
-import { detectI18nConfig, clearConfigCache } from '../../src/config/detector.js'
 import type { I18nConfig } from '../../src/config/types.js'
+import { createPlaygroundConfig, createAppAdminConfig } from '../fixtures/config.js'
 import { readLocaleFile } from '../../src/io/json-reader.js'
 import { mutateLocaleFile } from '../../src/io/json-writer.js'
 import {
@@ -16,6 +16,32 @@ import { loadProjectConfig } from '../../src/config/project-config.js'
 
 const playgroundDir = resolve(import.meta.dirname, '../../playground')
 const appAdminDir = resolve(import.meta.dirname, '../../playground/app-admin')
+
+// Mock the detector so we never call loadNuxt
+vi.mock('../../src/config/detector.js', async (importOriginal) => {
+  const original = await importOriginal<typeof import('../../src/config/detector.js')>()
+  let cached: I18nConfig | null = null
+  return {
+    ...original,
+    detectI18nConfig: vi.fn(async (projectDir: string) => {
+      if (projectDir === playgroundDir) {
+        cached = createPlaygroundConfig()
+        return cached
+      }
+      if (projectDir === appAdminDir) {
+        cached = createAppAdminConfig()
+        return cached
+      }
+      throw new Error(`No fixture config for ${projectDir}`)
+    }),
+    clearConfigCache: vi.fn(() => {
+      cached = null
+    }),
+    getCachedConfig: vi.fn(() => cached),
+  }
+})
+
+const { detectI18nConfig, clearConfigCache } = await import('../../src/config/detector.js')
 
 // Temp copy of locale dirs for mutation tests
 const tmpDir = resolve(import.meta.dirname, '../../.tmp-translate')
@@ -78,7 +104,7 @@ describe('translate_missing: missing key identification', () => {
 
   beforeAll(async () => {
     config = await detectI18nConfig(appAdminDir)
-  }, 30_000)
+  })
 
   afterAll(() => {
     clearConfigCache()
@@ -485,7 +511,7 @@ describe('add-feature-translations prompt structure', () => {
 
   beforeAll(async () => {
     config = await detectI18nConfig(playgroundDir)
-  }, 30_000)
+  })
 
   afterAll(() => {
     clearConfigCache()
@@ -542,7 +568,7 @@ describe('fix-missing-translations prompt structure', () => {
 
   beforeAll(async () => {
     config = await detectI18nConfig(playgroundDir)
-  }, 30_000)
+  })
 
   afterAll(() => {
     clearConfigCache()
