@@ -1,0 +1,60 @@
+# yaml-language-server: $schema=https://coderabbit.ai/integrations/schema.v2.json
+
+language: en-US
+
+reviews:
+  # Enable automatic reviews on PRs
+  auto_review:
+    enabled: true
+    drafts: false
+    base_branches:
+      - main
+
+  # High-level review profile
+  profile: chill
+
+  # Request changes only for critical issues
+  request_changes_workflow: false
+
+  # Review tools
+  tools:
+    # We already run ESLint locally and in CI — skip redundant linting
+    eslint:
+      enabled: false
+
+  path_instructions:
+    - path: "src/server.ts"
+      instructions: |
+        This is an MCP (Model Context Protocol) server. All 13 tools, 2 prompts, and 1 resource
+        template are registered here. Key constraints:
+        - NEVER use console.log/stdout — it corrupts the JSON-RPC stdio transport.
+        - All logging goes to stderr via src/utils/logger.ts.
+        - add_translations and update_translations share logic via applyTranslations().
+        - Tool errors use ToolError with structured codes (LOCALE_NOT_FOUND, LAYER_NOT_FOUND, etc.).
+    - path: "src/config/detector.ts"
+      instructions: |
+        Config detection uses @nuxt/kit loadNuxt() dynamically imported from the target project's
+        node_modules. Results are cached by projectDir. The retry-without-modules pattern is
+        intentional — some Nuxt modules fail outside a full build context.
+    - path: "src/io/**"
+      instructions: |
+        JSON I/O layer. json-writer.ts uses atomic writes (temp file + rename).
+        Format preservation (indentation detection) is critical — don't suggest changes that
+        would break it. mutateLocaleFile() is the primary write entry point.
+    - path: "src/scanner/code-scanner.ts"
+      instructions: |
+        Uses regex, not AST, intentionally — keeps dependencies minimal and is fast enough
+        for the use case. Bare t('word') without a dot prefix is filtered to avoid false
+        positives from emit(), import(), etc.
+    - path: "tests/**"
+      instructions: |
+        Integration tests run against the playground/ directory which is a real Nuxt 4 project.
+        es-ES is intentionally missing admin.users.* keys and fr-FR has admin.users.edit set
+        to "" for testing empty-as-missing detection. Don't suggest "fixing" these.
+    - path: ".github/workflows/**"
+      instructions: |
+        CI runs on Node 18 and 22 (matrix). Release uses google-github-actions/release-please-action.
+        The publish job requires NPM_TOKEN secret. pnpm version is read from packageManager field.
+
+chat:
+  auto_reply: true
