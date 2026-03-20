@@ -1,7 +1,6 @@
 import { describe, it, expect, afterEach, beforeEach, beforeAll, afterAll } from 'vitest'
 import { resolve, join } from 'node:path'
 import { cp, rm, mkdir } from 'node:fs/promises'
-import { detectI18nConfig, clearConfigCache } from '../../src/config/detector.js'
 import type { I18nConfig } from '../../src/config/types.js'
 import { readLocaleFile } from '../../src/io/json-reader.js'
 import { mutateLocaleFile } from '../../src/io/json-writer.js'
@@ -13,9 +12,12 @@ import {
   removeNestedValue,
 } from '../../src/io/key-operations.js'
 import { loadProjectConfig } from '../../src/config/project-config.js'
+import { registerDetectorMock, playgroundDir, appAdminDir } from '../fixtures/mock-detector.js'
 
-const playgroundDir = resolve(import.meta.dirname, '../../playground')
-const appAdminDir = resolve(import.meta.dirname, '../../playground/app-admin')
+// Register the shared detector mock (vi.mock is hoisted by Vitest)
+registerDetectorMock()
+
+const { detectI18nConfig, clearConfigCache } = await import('../../src/config/detector.js')
 
 // Temp copy of locale dirs for mutation tests
 const tmpDir = resolve(import.meta.dirname, '../../.tmp-translate')
@@ -78,7 +80,7 @@ describe('translate_missing: missing key identification', () => {
 
   beforeAll(async () => {
     config = await detectI18nConfig(appAdminDir)
-  }, 30_000)
+  })
 
   afterAll(() => {
     clearConfigCache()
@@ -485,7 +487,7 @@ describe('add-feature-translations prompt structure', () => {
 
   beforeAll(async () => {
     config = await detectI18nConfig(playgroundDir)
-  }, 30_000)
+  })
 
   afterAll(() => {
     clearConfigCache()
@@ -542,7 +544,7 @@ describe('fix-missing-translations prompt structure', () => {
 
   beforeAll(async () => {
     config = await detectI18nConfig(playgroundDir)
-  }, 30_000)
+  })
 
   afterAll(() => {
     clearConfigCache()

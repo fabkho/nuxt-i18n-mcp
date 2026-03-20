@@ -37,16 +37,16 @@ export async function detectI18nConfig(projectDir: string): Promise<I18nConfig> 
       },
     })
   } catch (_error) {
-    // Retry without modules — some may fail to load outside of full build context
-    log.warn('Initial loadNuxt failed, retrying without modules...')
+    // Retry with ready:false to skip full module initialization while keeping config intact
+    log.warn('Initial loadNuxt failed, retrying with ready:false...')
     try {
       nuxt = await kit.loadNuxt({
         cwd: projectDir,
         dotenv: { cwd: projectDir },
+        ready: false,
         overrides: {
           logLevel: 'silent' as const,
           vite: { clearScreen: false },
-          modules: [],
         },
       })
     } catch (retryError) {
@@ -57,7 +57,7 @@ export async function detectI18nConfig(projectDir: string): Promise<I18nConfig> 
   }
 
   try {
-    const config = await extractI18nConfig(nuxt, projectDir)
+    const config = await extractI18nConfig(nuxt as unknown as { options: Record<string, unknown> }, projectDir)
     cachedConfig = config
     log.info(`Detected ${config.locales.length} locales, ${config.localeDirs.length} locale directories`)
     return config

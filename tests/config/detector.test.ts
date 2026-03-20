@@ -1,17 +1,20 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest'
 import { resolve } from 'node:path'
-import { detectI18nConfig, clearConfigCache } from '../../src/config/detector.js'
+import { registerDetectorMock, playgroundDir, appAdminDir } from '../fixtures/mock-detector.js'
 import type { I18nConfig } from '../../src/config/types.js'
 
-const playgroundDir = resolve(import.meta.dirname, '../../playground')
-const appAdminDir = resolve(import.meta.dirname, '../../playground/app-admin')
+// Register the shared detector mock (vi.mock is hoisted by Vitest)
+registerDetectorMock()
+
+// Import after mock so the mock is in place
+const { detectI18nConfig, clearConfigCache, getCachedConfig } = await import('../../src/config/detector.js')
 
 describe('detectI18nConfig against playground', () => {
   let config: I18nConfig
 
   beforeAll(async () => {
     config = await detectI18nConfig(playgroundDir)
-  }, 30_000)
+  })
 
   afterAll(() => {
     clearConfigCache()
@@ -70,28 +73,45 @@ describe('detectI18nConfig against playground', () => {
     expect(hasDefault || hasEn).toBe(true)
   })
 
-  it('caches config on subsequent calls', async () => {
+  it('returns the same cached instance on subsequent calls', async () => {
     const config2 = await detectI18nConfig(playgroundDir)
-    expect(config).toBe(config2) // same reference = cached
+    // The mock preserves instance identity — same object reference
+    expect(config2).toBe(config)
+  })
+
+  it('getCachedConfig returns the last detected config', async () => {
+    // detectI18nConfig was already called in beforeAll, so cache should be populated
+    const cachedConfig = getCachedConfig()
+    expect(cachedConfig).toBe(config)
+  })
+
+  it('clearConfigCache resets the cached config to null', () => {
+    clearConfigCache()
+    expect(getCachedConfig()).toBeNull()
+  })
+
+  it('detectI18nConfig repopulates cache after clearing', async () => {
+    // Cache was cleared in the previous test, so detect again
+    const fresh = await detectI18nConfig(playgroundDir)
+    expect(fresh).toBeDefined()
+    expect(fresh.rootDir).toBe(playgroundDir)
+    expect(getCachedConfig()).toBe(fresh)
   })
 
   it('throws for non-existent project dir', async () => {
     await expect(
       detectI18nConfig('/tmp/nonexistent-project-dir-12345'),
     ).rejects.toThrow()
-  }, 30_000)
+  })
 })
 
 describe('detectI18nConfig against playground/app-admin (layer)', () => {
-  // When running from app-admin/:
-  //   _layers[0] = app-admin itself → deriveLayerName → 'root' (it's the cwd)
-  //   _layers[1] = ../playground    → deriveLayerName → 'playground' (basename)
-
   let config: I18nConfig
 
   beforeAll(async () => {
+    clearConfigCache()
     config = await detectI18nConfig(appAdminDir)
-  }, 30_000)
+  })
 
   afterAll(() => {
     clearConfigCache()
@@ -107,7 +127,6 @@ describe('detectI18nConfig against playground/app-admin (layer)', () => {
     expect(config.localeDirs).toHaveLength(2)
 
     const layers = config.localeDirs.map(d => d.layer)
-    // app-admin is the project entry, so it's 'root'; the extended parent is 'playground'
     expect(layers).toContain('root')
     expect(layers).toContain('playground')
   })
@@ -124,15 +143,17 @@ describe('detectI18nConfig against playground/app-admin (layer)', () => {
     expect(parentDir!.path).toBe(resolve(playgroundDir, 'i18n/locales'))
   })
 
-  it('detects 8 locales (4 from each layer, merged by code)', () => {
-    // @nuxtjs/i18n merges locale configs per code from both layers
-    // Both app-admin and playground define the same 4 locale codes
-    // The merged result may deduplicate or keep all — check we have at least 4 codes
+  it('detects 4 unique locale codes', () => {
     const codes = [...new Set(config.locales.map(l => l.code))]
     expect(codes).toHaveLength(4)
     expect(codes).toContain('de')
     expect(codes).toContain('en')
     expect(codes).toContain('fr')
     expect(codes).toContain('es')
+  })
+
+  it('getCachedConfig returns app-admin config after detection', () => {
+    const cached = getCachedConfig()
+    expect(cached).toBe(config)
   })
 })

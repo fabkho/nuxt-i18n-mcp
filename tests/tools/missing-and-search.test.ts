@@ -1,12 +1,14 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest'
 import { resolve, join } from 'node:path'
-import { detectI18nConfig, clearConfigCache } from '../../src/config/detector.js'
 import { readLocaleFile } from '../../src/io/json-reader.js'
 import { getLeafKeys, getNestedValue } from '../../src/io/key-operations.js'
 import type { I18nConfig } from '../../src/config/types.js'
+import { registerDetectorMock, playgroundDir, appAdminDir } from '../fixtures/mock-detector.js'
 
-const playgroundDir = resolve(import.meta.dirname, '../../playground')
-const appAdminDir = resolve(import.meta.dirname, '../../playground/app-admin')
+// Register the shared detector mock (vi.mock is hoisted by Vitest)
+registerDetectorMock()
+
+const { detectI18nConfig, clearConfigCache } = await import('../../src/config/detector.js')
 
 describe('get_missing_translations logic', () => {
   describe('app-admin', () => {
@@ -14,7 +16,7 @@ describe('get_missing_translations logic', () => {
 
     beforeAll(async () => {
       config = await detectI18nConfig(appAdminDir)
-    }, 30_000)
+    })
 
     afterAll(() => {
       clearConfigCache()
@@ -133,7 +135,7 @@ describe('get_missing_translations logic', () => {
 
     beforeAll(async () => {
       config = await detectI18nConfig(playgroundDir)
-    }, 30_000)
+    })
 
     afterAll(() => {
       clearConfigCache()
@@ -185,7 +187,7 @@ describe('search_translations logic', () => {
 
     beforeAll(async () => {
       config = await detectI18nConfig(playgroundDir)
-    }, 30_000)
+    })
 
     afterAll(() => {
       clearConfigCache()
@@ -297,7 +299,7 @@ describe('search_translations logic', () => {
 
     beforeAll(async () => {
       config = await detectI18nConfig(appAdminDir)
-    }, 30_000)
+    })
 
     afterAll(() => {
       clearConfigCache()

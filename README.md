@@ -6,7 +6,7 @@ Works with any MCP-compatible host: VS Code, Zed, Claude Desktop, Cursor, etc.
 
 ## How it works
 
-The server uses `@nuxt/kit` to load your actual Nuxt config (including layers), so it understands your project structure without any hardcoded paths. It discovers locale directories, reads and writes JSON translation files, and exposes everything through 10 MCP tools the agent can call.
+The server uses `@nuxt/kit` to load your actual Nuxt config (including layers), so it understands your project structure without any hardcoded paths. It discovers locale directories, reads and writes JSON translation files, and exposes everything through 13 MCP tools the agent can call.
 
 The agent calls `detect_i18n_config` first to learn about the project, then uses the other tools to read, write, search, and manage translations. If you have a `.i18n-mcp.json` config file, the server passes your glossary, layer rules, and translation style to the agent so it follows your conventions.
 
@@ -38,7 +38,7 @@ Add to `.vscode/mcp.json` in your project:
 
 ### Zed
 
-Add to your Zed settings (`settings.json`):
+Add to your project-level Zed settings (`.zed/settings.json`):
 
 ```json
 {
@@ -72,22 +72,42 @@ Claude Desktop needs absolute paths since it doesn't run from your project direc
 
 ## Tools
 
-The server exposes 10 tools. The agent discovers them automatically — you just ask it to do things like "add a save button translation in all locales" and it figures out which tools to call.
+The server exposes 13 tools. The agent discovers them automatically — you just ask it to do things like "add a save button translation in all locales" and it figures out which tools to call.
 
-That said, here's what's available:
+### Config & Discovery
 
 | Tool | What it does |
 |------|-------------|
 | `detect_i18n_config` | Loads your Nuxt config via `@nuxt/kit` and returns locales, layers, directories, and project config. The agent should call this first. |
 | `list_locale_dirs` | Lists all locale directories grouped by layer, with file counts and top-level key namespaces. Good for orientation. |
+
+### Read & Search
+
+| Tool | What it does |
+|------|-------------|
 | `get_translations` | Reads values for dot-path keys from a specific locale and layer. Pass `*` as locale to read from all locales at once. |
+| `get_missing_translations` | Finds keys present in a reference locale but missing (or empty) in target locales. Scans one layer or all layers. |
+| `search_translations` | Searches by key pattern or value substring. Useful for finding existing translations before adding duplicates. |
+
+### Write & Modify
+
+| Tool | What it does |
+|------|-------------|
 | `add_translations` | Adds new keys across locales. Fails if a key already exists (use `update_translations` instead). Keys are inserted alphabetically. |
 | `update_translations` | Updates existing keys. Fails if a key doesn't exist (use `add_translations` instead). |
-| `get_missing_translations` | Finds keys present in a reference locale but missing in target locales. Scans one layer or all layers. |
-| `search_translations` | Searches by key pattern or value substring. Useful for finding existing translations before adding duplicates. |
 | `remove_translations` | Removes keys from all locale files in a layer. Supports dry-run mode. |
 | `rename_translation_key` | Renames or moves a key across all locale files in a layer. Detects conflicts. Supports dry-run mode. |
 | `translate_missing` | Finds missing keys and translates them. Uses MCP sampling (host LLM) if available, otherwise returns context for the agent to translate inline. Respects your glossary, translation prompt, and locale notes. |
+
+### Code Analysis
+
+| Tool | What it does |
+|------|-------------|
+| `find_orphan_keys` | Finds translation keys that exist in locale JSON files but aren't referenced in any Vue/TS source code. Reports dynamic key references that can't be statically resolved. |
+| `scan_code_usage` | Scans source files to show where translation keys are used — file paths, line numbers, call patterns (`$t`, `t`, `this.$t`). Useful before renaming or removing a key. |
+| `cleanup_unused_translations` | Combines orphan detection and removal in one step. Defaults to dry-run so the agent previews before deleting. |
+
+The code analysis tools scan for `$t('key')`, `t('key')`, and `this.$t('key')` patterns in `.vue`, `.ts`, `.tsx`, `.js`, `.jsx`, `.mjs`, and `.mts` files. Dynamic keys using template literals (e.g., `` t(`prefix.${var}`) ``) are detected and flagged as unresolvable so you can review them manually.
 
 ### Prompts
 
@@ -216,15 +236,18 @@ A few things worth knowing:
 - **Writes are atomic.** The server writes to a temp file first, then renames it. No half-written JSON files.
 - **Format preservation.** The server detects your indentation style (tabs, 2-space, 4-space) and preserves it on write.
 - **Keys are sorted.** All writes sort keys alphabetically. This keeps diffs clean and works well with tools like BabelEdit.
+- **Empty strings are missing.** `get_missing_translations` and `translate_missing` treat keys with empty string values (`""`) as missing, not just absent keys. This matches what BabelEdit and other i18n tools report.
 - **Caching.** Config detection and file reads are cached (mtime-based for files). Writes automatically invalidate the cache.
 - **Sampling support varies.** VS Code supports MCP sampling, so `translate_missing` can call the host LLM directly. Zed doesn't (as of July 2025), so the tool falls back to giving the agent context to translate inline. Both paths work fine.
 - **Layers can overlap.** Different layers can define the same locale codes with different key namespaces. The agent (guided by your `layerRules`) decides which layer to write to.
+- **Monorepo with multiple apps.** If your project has multiple Nuxt apps that extend a shared root (e.g., `app-admin/`, `app-shop/`), point the agent at each app's directory — it'll discover the root layer automatically via the `extends` config.
 
 ## Development
 
 ```sh
 pnpm build          # Build via tsdown -> dist/index.js
 pnpm test           # Run all tests
+pnpm test:perf      # Run performance benchmarks
 pnpm typecheck      # tsc --noEmit
 pnpm start          # Start the server on stdio
 pnpm inspect        # Open MCP Inspector for manual testing
