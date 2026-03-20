@@ -8,7 +8,7 @@
 
 An MCP server that lets AI agents manage i18n translations in Nuxt projects — without stuffing entire locale files into context.
 
-On large projects, translation files can be thousands of lines. Opening them eats context, and edits across dozens of locale files are error-prone. This server gives the agent structured tools that read and write only the keys it needs, keeping context small and operations safe.
+On large projects, translation files can be thousands of lines. Opening them eats context, and edits across dozens of locale files are error-prone. This server gives the agent structured tools that read and write only the keys it needs, keeping context small and operations safe. Feed it a glossary, tone guidelines, and per-locale instructions so translations stay consistent — even across teams.
 
 Works with any [MCP](https://modelcontextprotocol.io/)-compatible host: **VS Code**, **Cursor**, **Zed**, **Claude Desktop**, and more.
 
@@ -149,7 +149,7 @@ For IDE autocompletion, point to the schema:
   "context": "B2B SaaS booking platform. Professional but approachable tone.",
   "layerRules": [
     {
-      "layer": "root",
+      "layer": "shared",
       "description": "Shared translations: common.actions.*, common.messages.*",
       "when": "The key is generic enough to be used in multiple apps"
     },
