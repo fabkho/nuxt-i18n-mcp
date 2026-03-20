@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.0.1](https://github.com/fabkho/nuxt-i18n-mcp/compare/v1.0.0...v1.0.1) (2026-03-20)
+
+
+### Bug Fixes
+
+* shorten server.json description for MCP Registry 100-char limit ([b3c56e4](https://github.com/fabkho/nuxt-i18n-mcp/commit/b3c56e48431f39ec43dc8ad4e26493f7a4a65322))
+
 ## 1.0.0 (2026-03-20)
 
 
