@@ -1,5 +1,16 @@
 # Changelog
 
+## [1.1.0](https://github.com/fabkho/nuxt-i18n-mcp/compare/v1.0.1...v1.1.0) (2026-03-20)
+
+
+### Dependencies
+
+* upgrade zod from v3 to v4 (`^3.25.0` → `^4.3.6`) ([130acbd](https://github.com/fabkho/nuxt-i18n-mcp/commit/130acbd))
+* upgrade `@modelcontextprotocol/sdk` from `^1.12.0` to `^1.23.0` (minimum version with zod v4 peer compatibility)
+* upgrade `@nuxt/kit` devDependency from `^3.17.0` to `^4.4.2` ([eed18f7](https://github.com/fabkho/nuxt-i18n-mcp/commit/eed18f7))
+* widen `@nuxt/kit` peerDependency to `^3.0.0 || ^4.0.0` (supports both Nuxt 3 and Nuxt 4 projects)
+* bump minimum Node.js version from `>=18.0.0` to `>=18.12.0` (required by `@nuxt/kit` v4)
+
 ## [1.0.1](https://github.com/fabkho/nuxt-i18n-mcp/compare/v1.0.0...v1.0.1) (2026-03-20)
 
 
