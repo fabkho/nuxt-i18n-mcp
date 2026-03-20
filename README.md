@@ -46,10 +46,8 @@ Add to `.zed/settings.json`:
 {
   "context_servers": {
     "nuxt-i18n-mcp": {
-      "command": {
-        "path": "npx",
-        "args": ["nuxt-i18n-mcp"]
-      }
+      "command": "npx",
+      "args": ["nuxt-i18n-mcp"]
     }
   }
 }
