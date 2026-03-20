@@ -189,17 +189,16 @@ See [`playground/.i18n-mcp.json`](playground/.i18n-mcp.json) for a working examp
 
 - [ ] `find_hardcoded_strings` — detect user-facing strings not wrapped in `$t()`
 - [ ] `move_translations` — move keys between layers (e.g., promote to shared)
-- [ ] Multi-app discovery — auto-detect `app-*` subdirectories
 - [ ] Glossary validation — check translations against glossary terms
 - [ ] Flat JSON support — `flatJson: true` in vue-i18n config
 - [ ] Pluralization support — vue-i18n plural forms
+- [ ] Plain vue-i18n support — extract core into a monorepo, add a Vue/Vite adapter alongside the Nuxt one
 
 ## Good to Know
 
 - **Empty strings are missing** — `get_missing_translations` and `translate_missing` treat `""` as missing, matching BabelEdit behaviour.
 - **Caching** — config detection and file reads are cached (mtime-based). Writes invalidate automatically.
 - **Sampling support varies** — VS Code supports MCP sampling for `translate_missing`. Zed doesn't yet — the tool falls back to returning context for the agent to translate inline. Both paths work.
-- **Monorepo support** — each `app-*` directory is an independent Nuxt app. Point the agent at an app directory and it discovers the root layer via `extends`.
 
 ## Development
 
