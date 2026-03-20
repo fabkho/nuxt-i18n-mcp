@@ -185,6 +185,15 @@ See [`playground/.i18n-mcp.json`](playground/.i18n-mcp.json) for a working examp
 
 </details>
 
+## Roadmap
+
+- [ ] `find_hardcoded_strings` — detect user-facing strings not wrapped in `$t()`
+- [ ] `move_translations` — move keys between layers (e.g., promote to shared)
+- [ ] Multi-app discovery — auto-detect `app-*` subdirectories
+- [ ] Glossary validation — check translations against glossary terms
+- [ ] Flat JSON support — `flatJson: true` in vue-i18n config
+- [ ] Pluralization support — vue-i18n plural forms
+
 ## Good to Know
 
 - **Empty strings are missing** — `get_missing_translations` and `translate_missing` treat `""` as missing, matching BabelEdit behaviour.
