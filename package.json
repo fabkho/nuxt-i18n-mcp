@@ -46,9 +46,9 @@
     "prepare": "husky"
   },
   "dependencies": {
-    "@modelcontextprotocol/sdk": "^1.12.0",
+    "@modelcontextprotocol/sdk": "^1.23.0",
     "tinyglobby": "^0.2.15",
-    "zod": "^3.25.0"
+    "zod": "^4.3.6"
   },
   "peerDependencies": {
     "@nuxt/kit": "^3.0.0"
