@@ -2,7 +2,28 @@
   "name": "nuxt-i18n-mcp",
   "version": "0.1.0-alpha.1",
   "description": "MCP server for managing i18n translation files in Nuxt projects",
+  "author": "Fabian Kirchhoff",
+  "license": "MIT",
   "type": "module",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/fabkho/nuxt-i18n-mcp.git"
+  },
+  "homepage": "https://github.com/fabkho/nuxt-i18n-mcp#readme",
+  "bugs": {
+    "url": "https://github.com/fabkho/nuxt-i18n-mcp/issues"
+  },
+  "keywords": [
+    "mcp",
+    "i18n",
+    "nuxt",
+    "vue",
+    "translations",
+    "model-context-protocol",
+    "ai",
+    "locale",
+    "internationalization"
+  ],
   "bin": {
     "nuxt-i18n-mcp": "./dist/index.js"
   },
@@ -12,7 +33,7 @@
     "schema.json"
   ],
   "scripts": {
-    "build": "tsdown",
+    "build": "tsdown && chmod +x dist/index.js",
     "dev": "tsdown --watch",
     "start": "node dist/index.js",
     "test": "vitest run",
@@ -50,7 +71,6 @@
   },
   "packageManager": "pnpm@10.12.1",
   "engines": {
-    "node": ">=20.0.0"
-  },
-  "license": "MIT"
+    "node": ">=18.0.0"
+  }
 }
