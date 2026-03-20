@@ -1,6 +1,7 @@
 {
   "name": "nuxt-i18n-mcp",
   "version": "1.0.0",
+  "mcpName": "io.github.fabkho/nuxt-i18n-mcp",
   "description": "MCP server for managing i18n translation files in Nuxt projects",
   "author": "Fabian Kirchhoff",
   "license": "MIT",
