@@ -16,8 +16,10 @@ import {
 import { scanSourceFiles, toRelativePath } from './scanner/code-scanner.js'
 import { log } from './utils/logger.js'
 import { ToolError } from './utils/errors.js'
+import { generateProjectConfig } from './generator/config-generator.js'
 import { join } from 'node:path'
-import { readdir } from 'node:fs/promises'
+import { existsSync } from 'node:fs'
+import { readdir, writeFile } from 'node:fs/promises'
 
 // ─── Shared helpers ───────────────────────────────────────────────
 
@@ -1692,6 +1694,82 @@ export function createServer(): McpServer {
         }
       } catch (error) {
         return toolErrorResponse('cleaning up unused translations', error)
+      }
+    },
+  )
+
+  // ─── Tool: generate_config ──────────────────────────────────────
+
+  server.registerTool(
+    'generate_config',
+    {
+      title: 'Generate Project Config',
+      description:
+        'Analyze the project\'s i18n setup and generate a .i18n-mcp.json config file with glossary, layer rules, locale notes, examples, and translation prompt. The generated config is a starting point — refine it to match your project.',
+      inputSchema: {
+        projectDir: z
+          .string()
+          .optional()
+          .describe('Absolute path to the Nuxt project root. Defaults to server cwd.'),
+        overwrite: z
+          .boolean()
+          .optional()
+          .describe('If true, overwrite existing .i18n-mcp.json. Default: false.'),
+        dryRun: z
+          .boolean()
+          .optional()
+          .describe('If true, return generated config without writing to disk. Default: false.'),
+      },
+    },
+    async ({ projectDir, overwrite, dryRun }) => {
+      try {
+        const dir = projectDir ?? process.cwd()
+        const configPath = join(dir, '.i18n-mcp.json')
+
+        if (!dryRun && !overwrite && existsSync(configPath)) {
+          throw new ToolError(
+            `Config already exists at ${configPath}. Use overwrite: true to replace, or dryRun: true to preview.`,
+            'CONFIG_EXISTS',
+          )
+        }
+
+        const i18nConfig = await detectI18nConfig(dir)
+        const generatedConfig = await generateProjectConfig(i18nConfig)
+
+        const output: Record<string, unknown> = {
+          $schema: 'node_modules/nuxt-i18n-mcp/schema.json',
+          ...generatedConfig,
+        }
+
+        if (!dryRun) {
+          await writeFile(configPath, JSON.stringify(output, null, 2) + '\n', 'utf-8')
+        }
+
+        const layerCount = i18nConfig.localeDirs.filter(d => !d.aliasOf).length
+        const localeCount = i18nConfig.locales.length
+
+        return {
+          content: [{
+            type: 'text' as const,
+            text: JSON.stringify({
+              config: output,
+              summary: {
+                dryRun: dryRun ?? false,
+                configPath,
+                layersDetected: layerCount,
+                localesDetected: localeCount,
+                fieldsGenerated: Object.keys(generatedConfig).filter(k => {
+                  const val = generatedConfig[k as keyof typeof generatedConfig]
+                  if (Array.isArray(val)) return val.length > 0
+                  if (typeof val === 'object' && val !== null) return Object.keys(val).length > 0
+                  return val !== undefined && val !== ''
+                }),
+              },
+            }, null, 2),
+          }],
+        }
+      } catch (error) {
+        return toolErrorResponse('generating project config', error)
       }
     },
   )
