@@ -111,7 +111,6 @@ describe('loadProjectConfig', () => {
       await writeFile(configPath, JSON.stringify({
         orphanScan: {
           root: {
-            description: 'Root layer keys used across all apps',
             scanDirs: ['apps/shop', 'apps/admin', 'packages/shared']
           },
           'app-admin': {
@@ -123,9 +122,7 @@ describe('loadProjectConfig', () => {
       expect(config).not.toBeNull()
       expect(config!.orphanScan).toBeDefined()
       expect(config!.orphanScan!.root.scanDirs).toEqual(['apps/shop', 'apps/admin', 'packages/shared'])
-      expect(config!.orphanScan!.root.description).toBe('Root layer keys used across all apps')
       expect(config!.orphanScan!['app-admin'].scanDirs).toEqual(['apps/admin'])
-      expect(config!.orphanScan!['app-admin'].description).toBeUndefined()
     } finally {
       if (existsSync(configPath)) await unlink(configPath)
     }
@@ -146,7 +143,7 @@ describe('loadProjectConfig', () => {
     await mkdir(tmpDir, { recursive: true })
     const configPath = resolve(tmpDir, '.i18n-mcp.json')
     try {
-      await writeFile(configPath, JSON.stringify({ orphanScan: { root: { description: 'no dirs' } } }), 'utf-8')
+      await writeFile(configPath, JSON.stringify({ orphanScan: { root: {} } }), 'utf-8')
       await expect(loadProjectConfig(tmpDir)).rejects.toThrow('scanDirs')
     } finally {
       if (existsSync(configPath)) await unlink(configPath)

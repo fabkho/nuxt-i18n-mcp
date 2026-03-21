@@ -145,9 +145,6 @@ export async function loadProjectConfig(projectDir: string): Promise<ProjectConf
           throw new ConfigError(`${CONFIG_FILENAME}: "orphanScan.${layerName}.scanDirs[${i}]" must be a string`)
         }
       }
-      if ('description' in layerObj && typeof layerObj.description !== 'string') {
-        throw new ConfigError(`${CONFIG_FILENAME}: "orphanScan.${layerName}.description" must be a string`)
-      }
     }
   }
 
