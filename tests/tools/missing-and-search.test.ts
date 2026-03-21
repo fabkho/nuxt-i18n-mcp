@@ -349,3 +349,56 @@ describe('search_translations logic', () => {
     })
   })
 })
+
+describe('find_empty_translations logic', () => {
+  describe('app-admin', () => {
+    let config: I18nConfig
+
+    beforeAll(async () => {
+      config = await detectI18nConfig(appAdminDir)
+    })
+
+    afterAll(() => {
+      clearConfigCache()
+    })
+
+    it('finds keys with empty string values', async () => {
+      const rootLayer = config.localeDirs.find(d => d.layer === 'root')!
+      const frData = await readLocaleFile(join(rootLayer.path, 'fr-FR.json'))
+      const leafKeys = getLeafKeys(frData)
+      const emptyKeys = leafKeys.filter(k => getNestedValue(frData, k) === '')
+
+      expect(emptyKeys).toContain('admin.users.edit')
+      expect(emptyKeys).toHaveLength(1)
+    })
+
+    it('does not include non-empty values as empty', async () => {
+      const rootLayer = config.localeDirs.find(d => d.layer === 'root')!
+      const frData = await readLocaleFile(join(rootLayer.path, 'fr-FR.json'))
+      const leafKeys = getLeafKeys(frData)
+      const emptyKeys = leafKeys.filter(k => getNestedValue(frData, k) === '')
+
+      expect(emptyKeys).not.toContain('admin.dashboard.title')
+      expect(emptyKeys).not.toContain('admin.users.list')
+    })
+
+    it('does not report missing keys as empty', async () => {
+      const rootLayer = config.localeDirs.find(d => d.layer === 'root')!
+      const esData = await readLocaleFile(join(rootLayer.path, 'es-ES.json'))
+      const leafKeys = getLeafKeys(esData)
+      const emptyKeys = leafKeys.filter(k => getNestedValue(esData, k) === '')
+
+      expect(emptyKeys).toHaveLength(0)
+      expect(getNestedValue(esData, 'admin.users.list')).toBeUndefined()
+    })
+
+    it('returns no empty keys for fully translated locale', async () => {
+      const rootLayer = config.localeDirs.find(d => d.layer === 'root')!
+      const deData = await readLocaleFile(join(rootLayer.path, 'de-DE.json'))
+      const leafKeys = getLeafKeys(deData)
+      const emptyKeys = leafKeys.filter(k => getNestedValue(deData, k) === '')
+
+      expect(emptyKeys).toHaveLength(0)
+    })
+  })
+})

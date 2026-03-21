@@ -663,6 +663,103 @@ export function createServer(): McpServer {
     },
   )
 
+  // ─── Tool: find_empty_translations ─────────────────────────────
+
+  server.registerTool(
+    'find_empty_translations',
+    {
+      title: 'Find Empty Translations',
+      description:
+        'Find translation keys that have empty string values ("") in locale files. Unlike get_missing_translations which compares against a reference locale, this tool checks each locale independently for empty values. Useful for finding untranslated keys in the reference locale itself.',
+      inputSchema: {
+        layer: z.string().optional().describe('Layer name to scan. If omitted, scans all layers.'),
+        locale: z.string().optional().describe('Locale code to check. If omitted, checks all locales.'),
+        projectDir: z.string().optional().describe('Absolute path to the Nuxt project root. Defaults to server cwd.'),
+      },
+    },
+    async ({ layer, locale, projectDir }) => {
+      try {
+        const dir = projectDir ?? process.cwd()
+        const config = await detectI18nConfig(dir)
+
+        // Determine locales to check
+        const localesToCheck = locale
+          ? (() => {
+              const loc = findLocale(config, locale)
+              if (!loc) {
+                throw new ToolError(
+                  `Locale not found: "${locale}". Available: ${config.locales.map(l => l.code).join(', ')}`,
+                  'LOCALE_NOT_FOUND',
+                )
+              }
+              return [loc]
+            })()
+          : config.locales
+
+        // Determine layers to scan
+        const layersToScan = layer
+          ? config.localeDirs.filter(d => d.layer === layer)
+          : config.localeDirs.filter(d => !d.aliasOf)
+
+        if (layersToScan.length === 0) {
+          if (layer) {
+            throw new ToolError(
+              `Layer not found: "${layer}". Available: ${config.localeDirs.map(d => d.layer).join(', ')}`,
+              'LAYER_NOT_FOUND',
+            )
+          }
+          throw new ToolError('No locale directories found.', 'LAYER_NOT_FOUND')
+        }
+
+        const emptyKeys: Record<string, Record<string, string[]>> = {}
+        let totalEmpty = 0
+
+        for (const localeDir of layersToScan) {
+          for (const loc of localesToCheck) {
+            const filePath = resolveLocaleFilePath(config, localeDir.layer, loc.file)
+            if (!filePath) continue
+
+            let data: Record<string, unknown>
+            try {
+              data = await readLocaleFile(filePath)
+            } catch {
+              continue
+            }
+
+            const leafKeys = getLeafKeys(data)
+            const empty = leafKeys.filter(k => getNestedValue(data, k) === '')
+
+            if (empty.length > 0) {
+              if (!emptyKeys[loc.code]) emptyKeys[loc.code] = {}
+              emptyKeys[loc.code][localeDir.layer] = empty
+              totalEmpty += empty.length
+            }
+          }
+        }
+
+        const output = {
+          emptyKeys,
+          summary: {
+            totalEmpty,
+            localesChecked: localesToCheck.map(l => l.code),
+            layersChecked: layersToScan.map(d => d.layer),
+          },
+        }
+
+        return {
+          content: [
+            {
+              type: 'text' as const,
+              text: JSON.stringify(output, null, 2),
+            },
+          ],
+        }
+      } catch (error) {
+        return toolErrorResponse('find_empty_translations', error)
+      }
+    },
+  )
+
   // ─── Tool: search_translations ─────────────────────────────────
 
   server.registerTool(
