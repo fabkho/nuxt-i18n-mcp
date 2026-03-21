@@ -13,7 +13,7 @@ import {
   renameNestedKey,
   validateTranslationValue,
 } from './io/key-operations.js'
-import { scanSourceFiles, toRelativePath } from './scanner/code-scanner.js'
+import { scanSourceFiles, toRelativePath, buildDynamicKeyRegexes } from './scanner/code-scanner.js'
 import { log } from './utils/logger.js'
 import { ToolError } from './utils/errors.js'
 import { join } from 'node:path'
@@ -1352,10 +1352,17 @@ export function createServer(): McpServer {
         }
 
         // Find orphan keys: translation keys not referenced in source code
+        const dynamicKeyRegexes = buildDynamicKeyRegexes(allDynamicKeys)
+
         const orphanKeys: Array<{ key: string; layer: string }> = []
+        let dynamicMatchedCount = 0
         for (const [key, keyLayer] of allTranslationKeys) {
           if (!combinedUniqueKeys.has(key)) {
-            orphanKeys.push({ key, layer: keyLayer })
+            if (dynamicKeyRegexes.some(re => re.test(key))) {
+              dynamicMatchedCount++
+            } else {
+              orphanKeys.push({ key, layer: keyLayer })
+            }
           }
         }
 
@@ -1374,6 +1381,7 @@ export function createServer(): McpServer {
           summary: {
             totalKeys: allTranslationKeys.size,
             orphanCount: orphanKeys.length,
+            dynamicMatchedCount,
             usedCount: allTranslationKeys.size - orphanKeys.length,
             filesScanned: totalFilesScanned,
             layersChecked: layersToCheck.map(d => d.layer),
@@ -1608,10 +1616,20 @@ export function createServer(): McpServer {
         }
 
         // Find orphan keys per layer
+        const dynamicKeyRegexes = buildDynamicKeyRegexes(allDynamicKeys)
+
         const orphansByLayer: Record<string, string[]> = {}
         let orphanCount = 0
+        let dynamicMatchedCount = 0
         for (const [layerName, keys] of keysByLayer) {
-          const orphans = keys.filter(k => !combinedUniqueKeys.has(k)).sort()
+          const orphans = keys.filter((k) => {
+            if (combinedUniqueKeys.has(k)) return false
+            if (dynamicKeyRegexes.some(re => re.test(k))) {
+              dynamicMatchedCount++
+              return false
+            }
+            return true
+          }).sort()
           if (orphans.length > 0) {
             orphansByLayer[layerName] = orphans
             orphanCount += orphans.length
@@ -1619,12 +1637,15 @@ export function createServer(): McpServer {
         }
 
         if (orphanCount === 0) {
+          const message = dynamicMatchedCount > 0
+            ? `No orphan keys found. ${dynamicMatchedCount} key(s) were excluded by dynamic pattern matching.`
+            : 'No orphan keys found. All translation keys are referenced in code.'
           return {
             content: [{
               type: 'text' as const,
               text: JSON.stringify({
                 orphanKeys: {},
-                summary: { totalKeys, orphanCount: 0, filesScanned: totalFilesScanned, message: 'No orphan keys found. All translation keys are referenced in code.' },
+                summary: { totalKeys, orphanCount: 0, dynamicMatchedCount, filesScanned: totalFilesScanned, message },
               }, null, 2),
             }],
           }
@@ -1638,9 +1659,10 @@ export function createServer(): McpServer {
               dryRun: true,
               totalKeys,
               orphanCount,
+              dynamicMatchedCount,
               usedCount: totalKeys - orphanCount,
               filesScanned: totalFilesScanned,
-              message: `Found ${orphanCount} orphan key(s). Call again with dryRun: false to remove them.`,
+              message: `Found ${orphanCount} orphan key(s). ${dynamicMatchedCount > 0 ? `${dynamicMatchedCount} key(s) matched dynamic patterns and were excluded. ` : ''}Call again with dryRun: false to remove them.`,
             },
           }
           if (allDynamicKeys.length > 0) {
@@ -1688,6 +1710,7 @@ export function createServer(): McpServer {
                 dryRun: false,
                 totalKeys,
                 removedCount: orphanCount,
+                dynamicMatchedCount,
                 remainingCount: totalKeys - orphanCount,
                 filesWritten: totalFilesWritten,
                 filesScanned: totalFilesScanned,

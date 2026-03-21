@@ -49,6 +49,16 @@ const STATIC_KEY_PATTERN = /(?<!\w)(this\.\$t|\$t|\bt)\s*\(\s*(['"])((?:(?!\2).)
  */
 const DYNAMIC_KEY_PATTERN = /(?<!\w)(this\.\$t|\$t|\bt)\s*\(\s*`((?:[^`]|\\.)*)`/g
 
+/**
+ * Matches concatenation-based dynamic keys: t('prefix.' + var), $t("key." + expr)
+ * Captures the static string prefix before the `+` operator.
+ *
+ * Group 1: callee
+ * Group 2: quote character
+ * Group 3: the static prefix string
+ */
+const CONCAT_KEY_PATTERN = /(?<!\w)(this\.\$t|\$t|\bt)\s*\(\s*(['"])((?:(?!\2).)*)\2\s*\+/g
+
 // ─── Extraction ─────────────────────────────────────────────────
 
 /**
@@ -80,9 +90,86 @@ export function extractKeys(content: string, filePath: string): { usages: KeyUsa
       if (!expression.includes('${')) continue
       dynamicKeys.push({ expression: `\`${expression}\``, file: filePath, line: lineNumber, callee: match[1] })
     }
+
+    // Concatenation-based dynamic keys: t('prefix.' + var)
+    // Convert prefix to template literal format so buildDynamicKeyRegexes can handle it
+    for (const match of line.matchAll(CONCAT_KEY_PATTERN)) {
+      const callee = match[1]
+      const prefix = match[3]
+      if (!prefix) continue
+      if (callee === 't' && !prefix.includes('.')) continue
+      dynamicKeys.push({ expression: `\`${prefix}\${_}\``, file: filePath, line: lineNumber, callee })
+    }
   }
 
   return { usages, dynamicKeys }
+}
+
+// ─── Dynamic key pattern matching ───────────────────────────────
+
+/**
+ * Split a template literal expression on `${...}` interpolation boundaries,
+ * returning only the static literal segments. Handles nested braces inside
+ * interpolations (e.g. `${fn({a:1})}`) by tracking brace depth.
+ */
+function splitInterpolations(expr: string): string[] {
+  const parts: string[] = []
+  let current = ''
+  let i = 0
+
+  while (i < expr.length) {
+    if (expr[i] === '$' && expr[i + 1] === '{') {
+      parts.push(current)
+      current = ''
+      i += 2
+      let depth = 1
+      while (i < expr.length && depth > 0) {
+        if (expr[i] === '{') depth++
+        else if (expr[i] === '}') depth--
+        i++
+      }
+    } else {
+      current += expr[i]
+      i++
+    }
+  }
+
+  parts.push(current)
+  return parts
+}
+
+/**
+ * Convert dynamic key expressions (template literals with interpolation) into
+ * regex patterns that can match concrete translation keys.
+ *
+ * Example: `components.integrations.${type}.title` → /^components\.integrations\.[^.]+\.title$/
+ */
+export function buildDynamicKeyRegexes(dynamicKeys: Pick<DynamicKeyUsage, 'expression'>[]): RegExp[] {
+  const seen = new Set<string>()
+  const regexes: RegExp[] = []
+
+  for (const dk of dynamicKeys) {
+    // Strip outer backticks: `foo.${bar}.baz` → foo.${bar}.baz
+    let expr = dk.expression
+    if (expr.startsWith('`') && expr.endsWith('`')) {
+      expr = expr.slice(1, -1)
+    }
+
+    // Skip expressions that don't contain interpolation
+    if (!expr.includes('${')) continue
+
+    const pattern = splitInterpolations(expr)
+      .map(part => part.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'))
+      .join('[^.]+')
+
+    // Deduplicate identical patterns
+    if (seen.has(pattern)) continue
+    seen.add(pattern)
+
+    regexes.push(new RegExp(`^${pattern}$`))
+  }
+
+  return regexes
 }
 
 // ─── Scanning ───────────────────────────────────────────────────

@@ -2,7 +2,7 @@ import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest'
 import { mkdir, writeFile, rm } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { extractKeys, scanSourceFiles, toRelativePath } from '../../src/scanner/code-scanner.js'
+import { extractKeys, scanSourceFiles, toRelativePath, buildDynamicKeyRegexes } from '../../src/scanner/code-scanner.js'
 
 const tmpDir = join(dirname(fileURLToPath(import.meta.url)), '../../.tmp-test/scanner')
 
@@ -154,6 +154,45 @@ describe('extractKeys', () => {
     })
   })
 
+  describe('concatenation-based dynamic keys', () => {
+    it('detects t(\'prefix.\' + var) as dynamic key', () => {
+      const { dynamicKeys } = extract("t('common.metrics.' + key)")
+      expect(dynamicKeys).toHaveLength(1)
+      expect(dynamicKeys[0]).toMatchObject({
+        expression: '`common.metrics.${_}`',
+        callee: 't',
+        line: 1,
+      })
+    })
+
+    it('detects $t("prefix." + var) with double quotes', () => {
+      const { dynamicKeys } = extract('$t("common.status." + statusType)')
+      expect(dynamicKeys).toHaveLength(1)
+      expect(dynamicKeys[0].expression).toBe('`common.status.${_}`')
+    })
+
+    it('detects this.$t(\'prefix.\' + var)', () => {
+      const { dynamicKeys } = extract("this.$t('settings.fields.' + fieldName)")
+      expect(dynamicKeys).toHaveLength(1)
+      expect(dynamicKeys[0].callee).toBe('this.$t')
+    })
+
+    it('ignores bare t(\'word\' + var) without dot in prefix', () => {
+      const { dynamicKeys } = extract("t('prefix' + key)")
+      expect(dynamicKeys).toHaveLength(0)
+    })
+
+    it('$t always captures even without dot in prefix', () => {
+      const { dynamicKeys } = extract("$t('prefix' + key)")
+      expect(dynamicKeys).toHaveLength(1)
+    })
+
+    it('does not match non-i18n concatenation', () => {
+      const { dynamicKeys } = extract("console.log('prefix.' + key)")
+      expect(dynamicKeys).toHaveLength(0)
+    })
+  })
+
   describe('mixed static and dynamic on same line', () => {
     it('extracts both static and dynamic from a complex expression', () => {
       const content = `t('pages.dashboard.widgets.label') + \` / \${t(\`common.datetime.terms.\${options.frequency}\`)}\``
@@ -254,6 +293,81 @@ describe('extractKeys', () => {
       expect(usages).toHaveLength(1)
       expect(usages[0].key).toBe('pages.dashboard.widgets.customerBookingPatterns.yAxisLabel')
     })
+  })
+})
+
+describe('buildDynamicKeyRegexes', () => {
+  function makeDynamic(expression: string): { expression: string } {
+    return { expression }
+  }
+
+  it('converts single interpolation to regex', () => {
+    const regexes = buildDynamicKeyRegexes([makeDynamic('`common.metrics.${metric}`')])
+    expect(regexes).toHaveLength(1)
+    expect(regexes[0].test('common.metrics.revenue')).toBe(true)
+    expect(regexes[0].test('common.metrics.bookings')).toBe(true)
+    expect(regexes[0].test('common.other.revenue')).toBe(false)
+  })
+
+  it('converts multiple interpolations to regex', () => {
+    const regexes = buildDynamicKeyRegexes([makeDynamic('`${prefix}.items.${id}.label`')])
+    expect(regexes).toHaveLength(1)
+    expect(regexes[0].test('shop.items.42.label')).toBe(true)
+    expect(regexes[0].test('admin.items.abc.label')).toBe(true)
+    expect(regexes[0].test('items.42.label')).toBe(false)
+  })
+
+  it('returns empty array when no interpolations present', () => {
+    const regexes = buildDynamicKeyRegexes([makeDynamic('`common.actions.save`')])
+    expect(regexes).toHaveLength(0)
+  })
+
+  it('handles adjacent segments with interpolation', () => {
+    const regexes = buildDynamicKeyRegexes([makeDynamic('`settings.${section}.${field}`')])
+    expect(regexes).toHaveLength(1)
+    expect(regexes[0].test('settings.general.name')).toBe(true)
+    expect(regexes[0].test('settings.general.name.extra')).toBe(false)
+  })
+
+  it('escapes special regex characters in static parts', () => {
+    const regexes = buildDynamicKeyRegexes([makeDynamic('`path.with+special.${var}.end`')])
+    expect(regexes).toHaveLength(1)
+    expect(regexes[0].test('path.with+special.foo.end')).toBe(true)
+    expect(regexes[0].test('path.withXspecial.foo.end')).toBe(false)
+  })
+
+  it('deduplicates identical patterns', () => {
+    const regexes = buildDynamicKeyRegexes([
+      makeDynamic('`common.metrics.${metric}`'),
+      makeDynamic('`common.metrics.${otherVar}`'),
+    ])
+    expect(regexes).toHaveLength(1)
+  })
+
+  it('handles expressions without backticks', () => {
+    const regexes = buildDynamicKeyRegexes([makeDynamic('common.${type}.title')])
+    expect(regexes).toHaveLength(1)
+    expect(regexes[0].test('common.button.title')).toBe(true)
+  })
+
+  it('does not match partial keys (anchored)', () => {
+    const regexes = buildDynamicKeyRegexes([makeDynamic('`common.${type}`')])
+    expect(regexes).toHaveLength(1)
+    expect(regexes[0].test('common.button')).toBe(true)
+    expect(regexes[0].test('common.button.extra')).toBe(false)
+    expect(regexes[0].test('prefix.common.button')).toBe(false)
+  })
+
+  it('handles empty array', () => {
+    const regexes = buildDynamicKeyRegexes([])
+    expect(regexes).toHaveLength(0)
+  })
+
+  it('handles nested braces inside interpolation', () => {
+    const regexes = buildDynamicKeyRegexes([makeDynamic('`prefix.${fn({a:1})}.title`')])
+    expect(regexes).toHaveLength(1)
+    expect(regexes[0].test('prefix.computed.title')).toBe(true)
+    expect(regexes[0].test('prefix.computed.title.extra')).toBe(false)
   })
 })
 
