@@ -90,10 +90,6 @@
         "type": "object",
         "required": ["scanDirs"],
         "properties": {
-          "description": {
-            "type": "string",
-            "description": "Optional description of why these directories are scanned for this layer."
-          },
           "scanDirs": {
             "type": "array",
             "description": "Directories to scan for key usage (relative to project root).",
