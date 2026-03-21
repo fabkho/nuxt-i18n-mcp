@@ -98,7 +98,7 @@ That's it — no configuration needed. The server auto-detects your Nuxt config,
 | `detect_i18n_config` | Loads your Nuxt config and returns locales, layers, directories, and project config |
 | `list_locale_dirs` | Lists locale directories grouped by layer, with file counts and key namespaces |
 | `get_translations` | Reads values for specific dot-path keys from a locale/layer (`*` for all locales) |
-| `get_missing_translations` | Finds keys in a reference locale that are missing or empty in targets |
+| `get_missing_translations` | Finds keys present in the reference locale (default locale) that are missing or empty in targets. Comparison is **one-directional** — keys that only exist in a target locale but not in the reference are not reported. Pass `referenceLocale` to change the baseline. |
 | `search_translations` | Searches by key pattern or value substring |
 | `add_translations` | Adds new keys across locales (fails if key exists) |
 | `update_translations` | Updates existing keys (fails if key doesn't exist) |

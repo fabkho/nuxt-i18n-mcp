@@ -16,8 +16,10 @@ import {
 import { scanSourceFiles, toRelativePath } from './scanner/code-scanner.js'
 import { log } from './utils/logger.js'
 import { ToolError } from './utils/errors.js'
+import { generateProjectConfig } from './generator/config-generator.js'
+import type { ElicitedProjectInfo } from './generator/config-generator.js'
 import { join } from 'node:path'
-import { readdir } from 'node:fs/promises'
+import { readdir, writeFile } from 'node:fs/promises'
 
 // ─── Shared helpers ───────────────────────────────────────────────
 
@@ -1696,6 +1698,124 @@ export function createServer(): McpServer {
     },
   )
 
+  // ─── Tool: generate_config ──────────────────────────────────────
+
+  server.registerTool(
+    'generate_config',
+    {
+      title: 'Generate Project Config',
+      description:
+        'Analyze the project\'s i18n setup and generate a .i18n-mcp.json config file. Detects layers, locales, key namespaces, and generates layer rules, locale notes, examples, and a translation prompt. If the host supports MCP elicitation, asks the user for project description and tone to enrich the config. The glossary field is left empty for manual or agent-assisted refinement.',
+      inputSchema: {
+        projectDir: z
+          .string()
+          .optional()
+          .describe('Absolute path to the Nuxt project root. Defaults to server cwd.'),
+        overwrite: z
+          .boolean()
+          .optional()
+          .describe('If true, overwrite existing .i18n-mcp.json. Default: false.'),
+        dryRun: z
+          .boolean()
+          .optional()
+          .describe('If true, return generated config without writing to disk. Default: false.'),
+      },
+    },
+    async ({ projectDir, overwrite, dryRun }) => {
+      try {
+        const dir = projectDir ?? process.cwd()
+        const configPath = join(dir, '.i18n-mcp.json')
+
+        const i18nConfig = await detectI18nConfig(dir)
+
+        let elicited: ElicitedProjectInfo | undefined
+        const clientCapabilities = server.server.getClientCapabilities()
+        if (clientCapabilities?.elicitation) {
+          try {
+            const result = await server.server.elicitInput({
+              message: 'Provide optional project details to generate a better config. You can skip this.',
+              requestedSchema: {
+                type: 'object' as const,
+                properties: {
+                  description: {
+                    type: 'string' as const,
+                    title: 'Project Description',
+                    description: 'What does your app do? (e.g. "B2B SaaS booking platform for desk and room reservations")',
+                  },
+                  tone: {
+                    type: 'string' as const,
+                    title: 'Translation Tone',
+                    description: 'What tone should translations use?',
+                    enum: ['formal', 'informal', 'mixed'],
+                  },
+                },
+              },
+            })
+
+            if (result.action === 'accept' && result.content) {
+              elicited = {
+                description: typeof result.content.description === 'string' ? result.content.description : undefined,
+                tone: ['formal', 'informal', 'mixed'].includes(result.content.tone as string)
+                  ? result.content.tone as ElicitedProjectInfo['tone']
+                  : undefined,
+              }
+            }
+          } catch {
+            log.warn('Elicitation failed — proceeding without user input')
+          }
+        }
+
+        const generatedConfig = await generateProjectConfig(i18nConfig, elicited)
+
+        const output: Record<string, unknown> = {
+          $schema: 'node_modules/nuxt-i18n-mcp/schema.json',
+          ...generatedConfig,
+        }
+
+        if (!dryRun) {
+          const content = JSON.stringify(output, null, 2) + '\n'
+          try {
+            await writeFile(configPath, content, { encoding: 'utf-8', flag: overwrite ? 'w' : 'wx' })
+          } catch (err: unknown) {
+            if (err instanceof Error && 'code' in err && (err as NodeJS.ErrnoException).code === 'EEXIST') {
+              throw new ToolError(
+                `Config already exists at ${configPath}. Use overwrite: true to replace, or dryRun: true to preview.`,
+                'CONFIG_EXISTS',
+              )
+            }
+            throw err
+          }
+        }
+
+        const layerCount = i18nConfig.localeDirs.filter(d => !d.aliasOf).length
+        const localeCount = i18nConfig.locales.length
+
+        return {
+          content: [{
+            type: 'text' as const,
+            text: JSON.stringify({
+              config: output,
+              summary: {
+                dryRun: dryRun ?? false,
+                configPath,
+                layersDetected: layerCount,
+                localesDetected: localeCount,
+                fieldsGenerated: Object.keys(generatedConfig).filter(k => {
+                  const val = generatedConfig[k as keyof typeof generatedConfig]
+                  if (Array.isArray(val)) return val.length > 0
+                  if (typeof val === 'object' && val !== null) return Object.keys(val).length > 0
+                  return val !== undefined && val !== ''
+                }),
+              },
+            }, null, 2),
+          }],
+        }
+      } catch (error) {
+        return toolErrorResponse('generating project config', error)
+      }
+    },
+  )
+
   // ─── Resources ────────────────────────────────────────────────
 
   server.registerResource(
@@ -1879,6 +1999,74 @@ Follow these steps:
 3. For each locale with missing keys, call \`translate_missing\` to auto-fill gaps using the reference locale.
    - If auto-translation is not available, translate the keys yourself using the glossary and style guidelines above, then call \`add_translations\`.
 4. Report a summary of what was translated, organized by layer and locale.`
+
+      return {
+        messages: [
+          {
+            role: 'user' as const,
+            content: { type: 'text' as const, text: promptText },
+          },
+        ],
+      }
+    },
+  )
+
+  server.registerPrompt(
+    'create-config',
+    {
+      title: 'Create or Refine Project Config',
+      description: 'Guide an agent through creating or refining a .i18n-mcp.json config file by analyzing the project\'s i18n setup.',
+      argsSchema: {
+        projectDir: z.string().optional().describe('Absolute path to the Nuxt project root. Defaults to server cwd.'),
+      },
+    },
+    async ({ projectDir }) => {
+      const dir = projectDir ?? process.cwd()
+      let detectedInfo = ''
+
+      try {
+        const config = await detectI18nConfig(dir)
+        const layers = config.localeDirs.filter(d => !d.aliasOf).map(d => d.layer)
+        const aliases = config.localeDirs.filter(d => d.aliasOf).map(d => `${d.layer} → ${d.aliasOf}`)
+        const localeCodes = config.locales.map(l => l.code)
+
+        detectedInfo = `
+DETECTED PROJECT SETUP:
+- Layers: ${layers.join(', ')}${aliases.length > 0 ? `\n- Aliases: ${aliases.join(', ')}` : ''}
+- Locales: ${localeCodes.join(', ')}
+- Default locale: ${config.defaultLocale}
+- Fallback chain: ${JSON.stringify(config.fallbackLocale)}`
+      } catch {
+        detectedInfo = '\nCould not auto-detect i18n config. Ask the user for project details.'
+      }
+
+      const promptText = `Create or refine a .i18n-mcp.json config file for this project.
+${detectedInfo}
+
+Follow these steps:
+
+1. Call \`detect_i18n_config\` to understand the full project setup if not shown above.
+2. Ask the user about their project:
+   - What does the app do? (e.g. "B2B booking platform", "e-commerce store")
+   - What tone should translations use? (formal, informal, or mixed across locales)
+   - Are there any terms that should never be translated? (brand names, product terms)
+   - Are there terms that need consistent translation? (domain-specific vocabulary)
+3. Call \`generate_config\` with dryRun: true to get a baseline config.
+4. Review the generated config and enhance it:
+   - Rewrite \`context\` to include the user's project description.
+   - Update \`translationPrompt\` with the user's tone and style preferences.
+   - Add \`layerRules\` that match the project's architecture.
+   - Populate \`glossary\` with terms the user provided.
+   - Refine \`localeNotes\` based on any locale-specific instructions (formal registers, regional preferences).
+   - Add or update \`examples\` with real key-value pairs from the project.
+5. Write the final config to .i18n-mcp.json (call \`generate_config\` with the refined content, or write the file directly).
+6. Present the final config to the user for review.
+
+IMPORTANT:
+- The glossary is the most valuable part — populate it with domain terms, not common words.
+- Locale notes should mention formality registers (e.g. "Formal German using 'Sie'").
+- The translation prompt should be specific to the project's voice and constraints.
+- Preserve the $schema field for IDE autocompletion.`
 
       return {
         messages: [
