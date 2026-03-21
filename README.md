@@ -99,6 +99,7 @@ That's it — no configuration needed. The server auto-detects your Nuxt config,
 | `list_locale_dirs` | Lists locale directories grouped by layer, with file counts and key namespaces |
 | `get_translations` | Reads values for specific dot-path keys from a locale/layer (`*` for all locales) |
 | `get_missing_translations` | Finds keys in a reference locale that are missing or empty in targets |
+| `find_empty_translations` | Finds keys with empty string values in locale files (checks each locale independently) |
 | `search_translations` | Searches by key pattern or value substring |
 | `add_translations` | Adds new keys across locales (fails if key exists) |
 | `update_translations` | Updates existing keys (fails if key doesn't exist) |
