@@ -85,6 +85,44 @@ export function extractKeys(content: string, filePath: string): { usages: KeyUsa
   return { usages, dynamicKeys }
 }
 
+// ─── Dynamic key pattern matching ───────────────────────────────
+
+/**
+ * Convert dynamic key expressions (template literals with interpolation) into
+ * regex patterns that can match concrete translation keys.
+ *
+ * Example: `components.integrations.${type}.title` → /^components\.integrations\.[^.]+\.title$/
+ */
+export function buildDynamicKeyRegexes(dynamicKeys: Pick<DynamicKeyUsage, 'expression'>[]): RegExp[] {
+  const seen = new Set<string>()
+  const regexes: RegExp[] = []
+
+  for (const dk of dynamicKeys) {
+    // Strip outer backticks: `foo.${bar}.baz` → foo.${bar}.baz
+    let expr = dk.expression
+    if (expr.startsWith('`') && expr.endsWith('`')) {
+      expr = expr.slice(1, -1)
+    }
+
+    // Skip expressions that don't contain interpolation
+    if (!expr.includes('${')) continue
+
+    // Escape regex-special chars in static parts, replace ${...} with [^.]+ (one key segment)
+    const pattern = expr
+      .split(/\$\{[^}]*\}/)
+      .map(part => part.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'))
+      .join('[^.]+')
+
+    // Deduplicate identical patterns
+    if (seen.has(pattern)) continue
+    seen.add(pattern)
+
+    regexes.push(new RegExp(`^${pattern}$`))
+  }
+
+  return regexes
+}
+
 // ─── Scanning ───────────────────────────────────────────────────
 
 /**
