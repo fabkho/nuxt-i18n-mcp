@@ -2,7 +2,7 @@ import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest'
 import { mkdir, writeFile, rm } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { extractKeys, scanSourceFiles, toRelativePath } from '../../src/scanner/code-scanner.js'
+import { extractKeys, scanSourceFiles, toRelativePath, buildDynamicKeyRegexes } from '../../src/scanner/code-scanner.js'
 
 const tmpDir = join(dirname(fileURLToPath(import.meta.url)), '../../.tmp-test/scanner')
 
@@ -254,6 +254,74 @@ describe('extractKeys', () => {
       expect(usages).toHaveLength(1)
       expect(usages[0].key).toBe('pages.dashboard.widgets.customerBookingPatterns.yAxisLabel')
     })
+  })
+})
+
+describe('buildDynamicKeyRegexes', () => {
+  function makeDynamic(expression: string): { expression: string } {
+    return { expression }
+  }
+
+  it('converts single interpolation to regex', () => {
+    const regexes = buildDynamicKeyRegexes([makeDynamic('`common.metrics.${metric}`')])
+    expect(regexes).toHaveLength(1)
+    expect(regexes[0].test('common.metrics.revenue')).toBe(true)
+    expect(regexes[0].test('common.metrics.bookings')).toBe(true)
+    expect(regexes[0].test('common.other.revenue')).toBe(false)
+  })
+
+  it('converts multiple interpolations to regex', () => {
+    const regexes = buildDynamicKeyRegexes([makeDynamic('`${prefix}.items.${id}.label`')])
+    expect(regexes).toHaveLength(1)
+    expect(regexes[0].test('shop.items.42.label')).toBe(true)
+    expect(regexes[0].test('admin.items.abc.label')).toBe(true)
+    expect(regexes[0].test('items.42.label')).toBe(false)
+  })
+
+  it('returns empty array when no interpolations present', () => {
+    const regexes = buildDynamicKeyRegexes([makeDynamic('`common.actions.save`')])
+    expect(regexes).toHaveLength(0)
+  })
+
+  it('handles adjacent segments with interpolation', () => {
+    const regexes = buildDynamicKeyRegexes([makeDynamic('`settings.${section}.${field}`')])
+    expect(regexes).toHaveLength(1)
+    expect(regexes[0].test('settings.general.name')).toBe(true)
+    expect(regexes[0].test('settings.general.name.extra')).toBe(false)
+  })
+
+  it('escapes special regex characters in static parts', () => {
+    const regexes = buildDynamicKeyRegexes([makeDynamic('`path.with+special.${var}.end`')])
+    expect(regexes).toHaveLength(1)
+    expect(regexes[0].test('path.with+special.foo.end')).toBe(true)
+    expect(regexes[0].test('path.withXspecial.foo.end')).toBe(false)
+  })
+
+  it('deduplicates identical patterns', () => {
+    const regexes = buildDynamicKeyRegexes([
+      makeDynamic('`common.metrics.${metric}`'),
+      makeDynamic('`common.metrics.${otherVar}`'),
+    ])
+    expect(regexes).toHaveLength(1)
+  })
+
+  it('handles expressions without backticks', () => {
+    const regexes = buildDynamicKeyRegexes([makeDynamic('common.${type}.title')])
+    expect(regexes).toHaveLength(1)
+    expect(regexes[0].test('common.button.title')).toBe(true)
+  })
+
+  it('does not match partial keys (anchored)', () => {
+    const regexes = buildDynamicKeyRegexes([makeDynamic('`common.${type}`')])
+    expect(regexes).toHaveLength(1)
+    expect(regexes[0].test('common.button')).toBe(true)
+    expect(regexes[0].test('common.button.extra')).toBe(false)
+    expect(regexes[0].test('prefix.common.button')).toBe(false)
+  })
+
+  it('handles empty array', () => {
+    const regexes = buildDynamicKeyRegexes([])
+    expect(regexes).toHaveLength(0)
   })
 })
 
