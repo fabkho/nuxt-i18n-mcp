@@ -1,5 +1,28 @@
 # Changelog
 
+## [1.2.0](https://github.com/fabkho/nuxt-i18n-mcp/compare/v1.1.0...v1.2.0) (2026-03-21)
+
+
+### Features
+
+* add buildDynamicKeyRegexes() for dynamic key pattern matching ([4233c6f](https://github.com/fabkho/nuxt-i18n-mcp/commit/4233c6f1504bd42746dc67b8bb11d2c89febbd99))
+* add find_empty_translations tool ([be271c0](https://github.com/fabkho/nuxt-i18n-mcp/commit/be271c049704dae815232efce3d96bdd394ecd12))
+* add find_empty_translations tool ([b8f6677](https://github.com/fabkho/nuxt-i18n-mcp/commit/b8f6677724938f9b3c3a553342b919692d296f78))
+* add orphanScan config for per-layer scan scope ([2b48581](https://github.com/fabkho/nuxt-i18n-mcp/commit/2b4858133c7854f832e477b7a8c7cf92af109997))
+* configurable orphanScan scope per layer ([1048103](https://github.com/fabkho/nuxt-i18n-mcp/commit/10481031c2bc85125681ce3947cd024de3c39a00))
+* detect concatenation-based dynamic keys (t('prefix.' + var)) ([e3b4b58](https://github.com/fabkho/nuxt-i18n-mcp/commit/e3b4b58efaa874edc81e2e92e548ac3a5aba4242))
+* use buildDynamicKeyRegexes in find_orphan_keys and cleanup_unused_translations ([29ba41f](https://github.com/fabkho/nuxt-i18n-mcp/commit/29ba41f348fa69a5f3e0ed8c654289a935fbf077))
+* wire 3-tier scan directory fallback in orphan detection tools ([7acc033](https://github.com/fabkho/nuxt-i18n-mcp/commit/7acc03387218d49922771deb24048fcda3729ba4))
+
+
+### Bug Fixes
+
+* fallback layerRootDirs to projectDir when layers array is empty ([6cf4e3a](https://github.com/fabkho/nuxt-i18n-mcp/commit/6cf4e3a2f0e1b18cdc5d98bc138cddd59148abc2))
+* handle nested braces in interpolation splitting and improve zero-orphan message ([aa3cb41](https://github.com/fabkho/nuxt-i18n-mcp/commit/aa3cb41b4de4c6f69c1dd327d3d882a6f134973c))
+* scan all Nuxt layers for source code, not just those with locale dirs ([83f09c3](https://github.com/fabkho/nuxt-i18n-mcp/commit/83f09c3e6a26fa58eb14b52b0cf94e4ecdcdd902))
+* scan all Nuxt layers for source code, not just those with locale dirs ([932d855](https://github.com/fabkho/nuxt-i18n-mcp/commit/932d8558967b821e445f02c814e1c102a671235c))
+* use dynamic key patterns to reduce orphan detection false positives ([11324a9](https://github.com/fabkho/nuxt-i18n-mcp/commit/11324a99e4efe14c59c2c89b26918cc46a5aa149))
+
 ## [1.1.0](https://github.com/fabkho/nuxt-i18n-mcp/compare/v1.0.1...v1.1.0) (2026-03-20)
 
 
