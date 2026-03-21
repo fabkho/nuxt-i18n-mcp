@@ -82,6 +82,24 @@
           "type": "string"
         }
       }
+    },
+    "orphanScan": {
+      "type": "object",
+      "description": "Per-layer scan directories for orphan key detection. In monorepos, a shared layer's keys may be used across multiple apps. Map each layer name to the directories that should be scanned for its key usage. Paths are relative to the project root.",
+      "additionalProperties": {
+        "type": "object",
+        "required": ["scanDirs"],
+        "properties": {
+          "scanDirs": {
+            "type": "array",
+            "description": "Directories to scan for key usage (relative to project root).",
+            "items": {
+              "type": "string"
+            }
+          }
+        },
+        "additionalProperties": false
+      }
     }
   }
 }

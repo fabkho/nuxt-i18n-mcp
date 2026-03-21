@@ -16,8 +16,18 @@ import {
 import { scanSourceFiles, toRelativePath, buildDynamicKeyRegexes } from './scanner/code-scanner.js'
 import { log } from './utils/logger.js'
 import { ToolError } from './utils/errors.js'
-import { join } from 'node:path'
+import { join, resolve } from 'node:path'
 import { readdir } from 'node:fs/promises'
+
+function resolveOrphanScanDirs(
+  config: I18nConfig,
+  layer: string | undefined,
+): string[] | undefined {
+  if (!layer || !config.projectConfig?.orphanScan) return undefined
+  const layerConfig = config.projectConfig.orphanScan[layer]
+  if (!layerConfig) return undefined
+  return layerConfig.scanDirs.map(d => resolve(config.rootDir, d))
+}
 
 // ─── Shared helpers ───────────────────────────────────────────────
 
@@ -1335,7 +1345,7 @@ export function createServer(): McpServer {
         // Determine directories to scan for source code.
         // Use all layer roots (not just those with locale dirs) so layers without
         // i18n/locales/ still have their source files scanned for key usage.
-        const dirsToScan = scanDirs ?? config.layerRootDirs
+        const dirsToScan = scanDirs ?? resolveOrphanScanDirs(config, layer) ?? config.layerRootDirs
 
         // Scan all source files for key usage
         const combinedUniqueKeys = new Set<string>()
@@ -1599,7 +1609,7 @@ export function createServer(): McpServer {
         // Scan source files for key usage.
         // Use all layer roots (not just those with locale dirs) so layers without
         // i18n/locales/ still have their source files scanned for key usage.
-        const dirsToScan = scanDirs ?? config.layerRootDirs
+        const dirsToScan = scanDirs ?? resolveOrphanScanDirs(config, layer) ?? config.layerRootDirs
         const combinedUniqueKeys = new Set<string>()
         let totalFilesScanned = 0
         const allDynamicKeys: Array<{ expression: string; file: string; line: number }> = []

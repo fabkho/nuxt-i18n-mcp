@@ -47,6 +47,10 @@ export interface ProjectConfig {
   localeNotes?: Record<string, string>
   /** Few-shot translation examples */
   examples?: Array<Record<string, string>>
+  /** Per-layer scan directories for orphan key detection. Keys are layer names, scanDirs are paths relative to the project root. */
+  orphanScan?: Record<string, {
+    scanDirs: string[]
+  }>
 }
 
 /**

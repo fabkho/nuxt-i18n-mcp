@@ -103,4 +103,72 @@ describe('loadProjectConfig', () => {
       if (existsSync(configPath)) await unlink(configPath)
     }
   })
+
+  it('accepts valid orphanScan config', async () => {
+    await mkdir(tmpDir, { recursive: true })
+    const configPath = resolve(tmpDir, '.i18n-mcp.json')
+    try {
+      await writeFile(configPath, JSON.stringify({
+        orphanScan: {
+          root: {
+            scanDirs: ['apps/shop', 'apps/admin', 'packages/shared']
+          },
+          'app-admin': {
+            scanDirs: ['apps/admin']
+          }
+        }
+      }), 'utf-8')
+      const config = await loadProjectConfig(tmpDir)
+      expect(config).not.toBeNull()
+      expect(config!.orphanScan).toBeDefined()
+      expect(config!.orphanScan!.root.scanDirs).toEqual(['apps/shop', 'apps/admin', 'packages/shared'])
+      expect(config!.orphanScan!['app-admin'].scanDirs).toEqual(['apps/admin'])
+    } finally {
+      if (existsSync(configPath)) await unlink(configPath)
+    }
+  })
+
+  it('throws when orphanScan is not an object', async () => {
+    await mkdir(tmpDir, { recursive: true })
+    const configPath = resolve(tmpDir, '.i18n-mcp.json')
+    try {
+      await writeFile(configPath, JSON.stringify({ orphanScan: 'invalid' }), 'utf-8')
+      await expect(loadProjectConfig(tmpDir)).rejects.toThrow('"orphanScan" must be an object')
+    } finally {
+      if (existsSync(configPath)) await unlink(configPath)
+    }
+  })
+
+  it('throws when orphanScan entry is missing scanDirs', async () => {
+    await mkdir(tmpDir, { recursive: true })
+    const configPath = resolve(tmpDir, '.i18n-mcp.json')
+    try {
+      await writeFile(configPath, JSON.stringify({ orphanScan: { root: {} } }), 'utf-8')
+      await expect(loadProjectConfig(tmpDir)).rejects.toThrow('scanDirs')
+    } finally {
+      if (existsSync(configPath)) await unlink(configPath)
+    }
+  })
+
+  it('throws when orphanScan scanDirs contains non-strings', async () => {
+    await mkdir(tmpDir, { recursive: true })
+    const configPath = resolve(tmpDir, '.i18n-mcp.json')
+    try {
+      await writeFile(configPath, JSON.stringify({ orphanScan: { root: { scanDirs: [123] } } }), 'utf-8')
+      await expect(loadProjectConfig(tmpDir)).rejects.toThrow('scanDirs')
+    } finally {
+      if (existsSync(configPath)) await unlink(configPath)
+    }
+  })
+
+  it('throws when orphanScan layer entry is not an object', async () => {
+    await mkdir(tmpDir, { recursive: true })
+    const configPath = resolve(tmpDir, '.i18n-mcp.json')
+    try {
+      await writeFile(configPath, JSON.stringify({ orphanScan: { root: 'invalid' } }), 'utf-8')
+      await expect(loadProjectConfig(tmpDir)).rejects.toThrow('"orphanScan.root" must be an object')
+    } finally {
+      if (existsSync(configPath)) await unlink(configPath)
+    }
+  })
 })

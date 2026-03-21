@@ -126,6 +126,28 @@ export async function loadProjectConfig(projectDir: string): Promise<ProjectConf
     }
   }
 
+  // Validate orphanScan
+  if ('orphanScan' in config) {
+    if (typeof config.orphanScan !== 'object' || config.orphanScan === null || Array.isArray(config.orphanScan)) {
+      throw new ConfigError(`${CONFIG_FILENAME}: "orphanScan" must be an object`)
+    }
+    const orphanScan = config.orphanScan as Record<string, unknown>
+    for (const [layerName, layerConfig] of Object.entries(orphanScan)) {
+      if (typeof layerConfig !== 'object' || layerConfig === null || Array.isArray(layerConfig)) {
+        throw new ConfigError(`${CONFIG_FILENAME}: "orphanScan.${layerName}" must be an object`)
+      }
+      const layerObj = layerConfig as Record<string, unknown>
+      if (!Array.isArray(layerObj.scanDirs)) {
+        throw new ConfigError(`${CONFIG_FILENAME}: "orphanScan.${layerName}.scanDirs" must be an array of strings`)
+      }
+      for (let i = 0; i < layerObj.scanDirs.length; i++) {
+        if (typeof layerObj.scanDirs[i] !== 'string') {
+          throw new ConfigError(`${CONFIG_FILENAME}: "orphanScan.${layerName}.scanDirs[${i}]" must be a string`)
+        }
+      }
+    }
+  }
+
   log.debug(`Project config loaded successfully from ${configPath}`)
 
   return {
@@ -135,5 +157,6 @@ export async function loadProjectConfig(projectDir: string): Promise<ProjectConf
     translationPrompt: config.translationPrompt as string | undefined,
     localeNotes: config.localeNotes as Record<string, string> | undefined,
     examples: config.examples as Array<Record<string, string>> | undefined,
+    orphanScan: config.orphanScan as ProjectConfig['orphanScan'],
   }
 }
