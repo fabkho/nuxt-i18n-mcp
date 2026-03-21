@@ -124,11 +124,11 @@ describe('generateLocaleNotes', () => {
 
   it('detects region from BCP-47 tag', () => {
     const localeDefs: LocaleDefinition[] = [
-      { code: 'en-US', language: 'en-US', file: 'en-US.json' },
+      { code: 'en', language: 'en-US', file: 'en-US.json' },
       { code: 'en-GB', language: 'en-GB', file: 'en-GB.json' },
     ]
     const notes = generateLocaleNotes(localeDefs, {})
-    expect(notes['en-US']).toContain('American')
+    expect(notes['en']).toContain('American')
     expect(notes['en-GB']).toContain('British')
   })
 
@@ -139,6 +139,15 @@ describe('generateLocaleNotes', () => {
     const notes = generateLocaleNotes(localeDefs, {})
     expect(notes['fr-formal']).toContain('Formal register variant')
     expect(notes['fr-formal']).toContain('French')
+  })
+
+  it('suppresses redundant region label when it matches language name', () => {
+    const localeDefs: LocaleDefinition[] = [
+      { code: 'fr', language: 'fr-FR', file: 'fr-FR.json' },
+    ]
+    const notes = generateLocaleNotes(localeDefs, {})
+    expect(notes['fr']).toBe('French.')
+    expect(notes['fr']).not.toContain('French French')
   })
 })
 

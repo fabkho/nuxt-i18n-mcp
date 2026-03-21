@@ -78,12 +78,11 @@ export async function generateProjectConfig(
 
   if (secondLocaleDef) {
     secondLocaleDataByLayer = new Map()
-    const firstLayer = nonAliasLayers[0]
-    if (firstLayer) {
-      const filePath = join(firstLayer.path, secondLocaleDef.file)
+    for (const layer of nonAliasLayers) {
+      const filePath = join(layer.path, secondLocaleDef.file)
       try {
         const data = await readLocaleFile(filePath)
-        secondLocaleDataByLayer.set(firstLayer.layer, data)
+        secondLocaleDataByLayer.set(layer.layer, data)
       } catch {
         log.warn(`Could not read second locale for examples: ${filePath}`)
       }
@@ -124,12 +123,17 @@ export function generateLayerRules(
 ): Array<{ layer: string; description: string; when: string }> {
   const rules: Array<{ layer: string; description: string; when: string }> = []
 
+  const hasExplicitRoot = localeDirs.some(d => !d.aliasOf && d.layer === 'root')
   let rootLayer = ''
-  let maxKeys = 0
-  for (const [layer, keys] of keysByLayer) {
-    if (keys.length > maxKeys) {
-      maxKeys = keys.length
-      rootLayer = layer
+  if (hasExplicitRoot) {
+    rootLayer = 'root'
+  } else {
+    let maxKeys = 0
+    for (const [layer, keys] of keysByLayer) {
+      if (keys.length > maxKeys) {
+        maxKeys = keys.length
+        rootLayer = layer
+      }
     }
   }
 
@@ -185,7 +189,10 @@ export function generateLocaleNotes(
 
   for (const locale of locales) {
     const parts: string[] = []
-    const segments = locale.code.split('-')
+    // Use locale.language (BCP-47 tag like "de-DE", "en-US") for region detection,
+    // falling back to locale.code for projects where both are identical.
+    const bcp47 = locale.language || locale.code
+    const segments = bcp47.split('-')
     const primaryLang = segments[0].toLowerCase()
     const langName = LANGUAGE_NAMES[primaryLang] ?? primaryLang
 
@@ -203,7 +210,7 @@ export function generateLocaleNotes(
       const region = segments.find(s => s.length === 2 && s === s.toUpperCase())
       const regionLabel = region ? REGION_NAMES[region] : undefined
 
-      if (regionLabel) {
+      if (regionLabel && regionLabel !== langName) {
         parts.push(`${regionLabel} ${langName}.`)
       } else {
         parts.push(`${langName}.`)

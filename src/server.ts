@@ -19,7 +19,6 @@ import { ToolError } from './utils/errors.js'
 import { generateProjectConfig } from './generator/config-generator.js'
 import type { ElicitedProjectInfo } from './generator/config-generator.js'
 import { join } from 'node:path'
-import { existsSync } from 'node:fs'
 import { readdir, writeFile } from 'node:fs/promises'
 
 // ─── Shared helpers ───────────────────────────────────────────────
@@ -1727,13 +1726,6 @@ export function createServer(): McpServer {
         const dir = projectDir ?? process.cwd()
         const configPath = join(dir, '.i18n-mcp.json')
 
-        if (!dryRun && !overwrite && existsSync(configPath)) {
-          throw new ToolError(
-            `Config already exists at ${configPath}. Use overwrite: true to replace, or dryRun: true to preview.`,
-            'CONFIG_EXISTS',
-          )
-        }
-
         const i18nConfig = await detectI18nConfig(dir)
 
         let elicited: ElicitedProjectInfo | undefined
@@ -1781,7 +1773,18 @@ export function createServer(): McpServer {
         }
 
         if (!dryRun) {
-          await writeFile(configPath, JSON.stringify(output, null, 2) + '\n', 'utf-8')
+          const content = JSON.stringify(output, null, 2) + '\n'
+          try {
+            await writeFile(configPath, content, { encoding: 'utf-8', flag: overwrite ? 'w' : 'wx' })
+          } catch (err: unknown) {
+            if (err instanceof Error && 'code' in err && (err as NodeJS.ErrnoException).code === 'EEXIST') {
+              throw new ToolError(
+                `Config already exists at ${configPath}. Use overwrite: true to replace, or dryRun: true to preview.`,
+                'CONFIG_EXISTS',
+              )
+            }
+            throw err
+          }
         }
 
         const layerCount = i18nConfig.localeDirs.filter(d => !d.aliasOf).length
