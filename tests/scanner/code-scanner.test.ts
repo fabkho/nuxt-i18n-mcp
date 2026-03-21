@@ -154,6 +154,45 @@ describe('extractKeys', () => {
     })
   })
 
+  describe('concatenation-based dynamic keys', () => {
+    it('detects t(\'prefix.\' + var) as dynamic key', () => {
+      const { dynamicKeys } = extract("t('common.metrics.' + key)")
+      expect(dynamicKeys).toHaveLength(1)
+      expect(dynamicKeys[0]).toMatchObject({
+        expression: '`common.metrics.${_}`',
+        callee: 't',
+        line: 1,
+      })
+    })
+
+    it('detects $t("prefix." + var) with double quotes', () => {
+      const { dynamicKeys } = extract('$t("common.status." + statusType)')
+      expect(dynamicKeys).toHaveLength(1)
+      expect(dynamicKeys[0].expression).toBe('`common.status.${_}`')
+    })
+
+    it('detects this.$t(\'prefix.\' + var)', () => {
+      const { dynamicKeys } = extract("this.$t('settings.fields.' + fieldName)")
+      expect(dynamicKeys).toHaveLength(1)
+      expect(dynamicKeys[0].callee).toBe('this.$t')
+    })
+
+    it('ignores bare t(\'word\' + var) without dot in prefix', () => {
+      const { dynamicKeys } = extract("t('prefix' + key)")
+      expect(dynamicKeys).toHaveLength(0)
+    })
+
+    it('$t always captures even without dot in prefix', () => {
+      const { dynamicKeys } = extract("$t('prefix' + key)")
+      expect(dynamicKeys).toHaveLength(1)
+    })
+
+    it('does not match non-i18n concatenation', () => {
+      const { dynamicKeys } = extract("console.log('prefix.' + key)")
+      expect(dynamicKeys).toHaveLength(0)
+    })
+  })
+
   describe('mixed static and dynamic on same line', () => {
     it('extracts both static and dynamic from a complex expression', () => {
       const content = `t('pages.dashboard.widgets.label') + \` / \${t(\`common.datetime.terms.\${options.frequency}\`)}\``

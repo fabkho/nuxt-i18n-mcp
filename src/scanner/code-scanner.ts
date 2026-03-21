@@ -49,6 +49,16 @@ const STATIC_KEY_PATTERN = /(?<!\w)(this\.\$t|\$t|\bt)\s*\(\s*(['"])((?:(?!\2).)
  */
 const DYNAMIC_KEY_PATTERN = /(?<!\w)(this\.\$t|\$t|\bt)\s*\(\s*`((?:[^`]|\\.)*)`/g
 
+/**
+ * Matches concatenation-based dynamic keys: t('prefix.' + var), $t("key." + expr)
+ * Captures the static string prefix before the `+` operator.
+ *
+ * Group 1: callee
+ * Group 2: quote character
+ * Group 3: the static prefix string
+ */
+const CONCAT_KEY_PATTERN = /(?<!\w)(this\.\$t|\$t|\bt)\s*\(\s*(['"])((?:(?!\2).)*)\2\s*\+/g
+
 // ─── Extraction ─────────────────────────────────────────────────
 
 /**
@@ -79,6 +89,16 @@ export function extractKeys(content: string, filePath: string): { usages: KeyUsa
       const expression = match[2]
       if (!expression.includes('${')) continue
       dynamicKeys.push({ expression: `\`${expression}\``, file: filePath, line: lineNumber, callee: match[1] })
+    }
+
+    // Concatenation-based dynamic keys: t('prefix.' + var)
+    // Convert prefix to template literal format so buildDynamicKeyRegexes can handle it
+    for (const match of line.matchAll(CONCAT_KEY_PATTERN)) {
+      const callee = match[1]
+      const prefix = match[3]
+      if (!prefix) continue
+      if (callee === 't' && !prefix.includes('.')) continue
+      dynamicKeys.push({ expression: `\`${prefix}\${_}\``, file: filePath, line: lineNumber, callee })
     }
   }
 
