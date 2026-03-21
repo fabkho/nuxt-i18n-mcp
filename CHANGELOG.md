@@ -1,5 +1,42 @@
 # Changelog
 
+## [1.3.0](https://github.com/fabkho/nuxt-i18n-mcp/compare/v1.2.0...v1.3.0) (2026-03-21)
+
+
+### Features
+
+* add buildDynamicKeyRegexes() for dynamic key pattern matching ([b281b8e](https://github.com/fabkho/nuxt-i18n-mcp/commit/b281b8eeac746b029b35bec7eb7af436abd7afc7))
+* add cleanup_unused_translations tool (13th tool) ([6db4521](https://github.com/fabkho/nuxt-i18n-mcp/commit/6db4521b497b3199d735e6af5a150d61e6e01057))
+* add find_empty_translations tool ([7ce0c9f](https://github.com/fabkho/nuxt-i18n-mcp/commit/7ce0c9fd36579987c3f728a3c9ecb771070c50f8))
+* add find_empty_translations tool ([4c554ab](https://github.com/fabkho/nuxt-i18n-mcp/commit/4c554ab2d1dc0819f2f36a3b33bacf4e01db81d9))
+* add orphanScan config for per-layer scan scope ([6b6cfb1](https://github.com/fabkho/nuxt-i18n-mcp/commit/6b6cfb167ca3d34503893b703b27f9695188c631))
+* add scan_code_usage tool (12th tool) ([7cd5ed2](https://github.com/fabkho/nuxt-i18n-mcp/commit/7cd5ed27961041483410bb2eb2ae566976cba8a4))
+* configurable orphanScan scope per layer ([c92f230](https://github.com/fabkho/nuxt-i18n-mcp/commit/c92f23000c29cb0e1b7a69388396550dfa1f73c1))
+* detect concatenation-based dynamic keys (t('prefix.' + var)) ([62b5c0a](https://github.com/fabkho/nuxt-i18n-mcp/commit/62b5c0af683519eda7bf54245c67af310e2bd787))
+* Phase 1 MVP — MCP server with config detection, JSON I/O, and core tools ([b4b4713](https://github.com/fabkho/nuxt-i18n-mcp/commit/b4b47130a7491fff7a249cbf8d3ca99162e447c9))
+* Phase 2 — analysis, search & project config ([c9ff7b4](https://github.com/fabkho/nuxt-i18n-mcp/commit/c9ff7b49d1d68b70a2fcad1cc81583c8f65e621d))
+* Phase 3 — remove_translations and rename_translation_key tools ([b7572bb](https://github.com/fabkho/nuxt-i18n-mcp/commit/b7572bbd3bbe3be8355300a4dfd458655f63c41f))
+* Phase 4 — translate_missing tool and MCP prompts ([652a1d3](https://github.com/fabkho/nuxt-i18n-mcp/commit/652a1d3ec213f47706fb2e4a7428cec68d6cd48c))
+* Phase 5 (items 1-5) — polish, caching, error codes, edge cases ([e417b74](https://github.com/fabkho/nuxt-i18n-mcp/commit/e417b7438249a7c1b61231310e9badd41a45b008))
+* use buildDynamicKeyRegexes in find_orphan_keys and cleanup_unused_translations ([b99d7a5](https://github.com/fabkho/nuxt-i18n-mcp/commit/b99d7a5be9dec7b2aca41ba82aff56be62e707a9))
+* wire 3-tier scan directory fallback in orphan detection tools ([c8e90a9](https://github.com/fabkho/nuxt-i18n-mcp/commit/c8e90a9bd23a75299ce1b5219a28abec2c065208))
+
+
+### Bug Fixes
+
+* add pnpm workspace so CI installs playground dependencies ([d451cf2](https://github.com/fabkho/nuxt-i18n-mcp/commit/d451cf2d1f727791cd605640f0a9c3066c4b6780))
+* address CodeRabbit review findings ([c55f764](https://github.com/fabkho/nuxt-i18n-mcp/commit/c55f76497a7f95106d3a267d9fbc7aa1e12fcaee))
+* fallback layerRootDirs to projectDir when layers array is empty ([6cf4e3a](https://github.com/fabkho/nuxt-i18n-mcp/commit/6cf4e3a2f0e1b18cdc5d98bc138cddd59148abc2))
+* handle nested braces in interpolation splitting and improve zero-orphan message ([29523b2](https://github.com/fabkho/nuxt-i18n-mcp/commit/29523b2645275ae51cae53ac8fb28ea89698d32e))
+* scan all Nuxt layers for source code, not just those with locale dirs ([83f09c3](https://github.com/fabkho/nuxt-i18n-mcp/commit/83f09c3e6a26fa58eb14b52b0cf94e4ecdcdd902))
+* scan all Nuxt layers for source code, not just those with locale dirs ([932d855](https://github.com/fabkho/nuxt-i18n-mcp/commit/932d8558967b821e445f02c814e1c102a671235c))
+* shorten server.json description for MCP Registry 100-char limit ([b3c56e4](https://github.com/fabkho/nuxt-i18n-mcp/commit/b3c56e48431f39ec43dc8ad4e26493f7a4a65322))
+* treat empty-string and null values as missing translations ([adba2ec](https://github.com/fabkho/nuxt-i18n-mcp/commit/adba2ec52a80fbcf17d8df61f50e43f027269ad4))
+* use dynamic key patterns to reduce orphan detection false positives ([2a5586c](https://github.com/fabkho/nuxt-i18n-mcp/commit/2a5586c429ac2e27a14b3b522021e81da8e8da03))
+* use ready:false instead of modules:[] in loadNuxt retry to fix CI ([1f274f4](https://github.com/fabkho/nuxt-i18n-mcp/commit/1f274f4d893f82bc579e825b49de1c662e555c89))
+* walk up directory tree to find .i18n-mcp.json in monorepos ([3c13fae](https://github.com/fabkho/nuxt-i18n-mcp/commit/3c13faecd63b1789db5e16a6078ea158204f0d18))
+* walk up directory tree to find .i18n-mcp.json in monorepos ([e354298](https://github.com/fabkho/nuxt-i18n-mcp/commit/e354298f44c911d1ef2575dfc3e617619229cba0)), closes [#19](https://github.com/fabkho/nuxt-i18n-mcp/issues/19)
+
 ## [1.2.0](https://github.com/fabkho/nuxt-i18n-mcp/compare/v1.1.0...v1.2.0) (2026-03-21)
 
 
