@@ -110,6 +110,38 @@ That's it — no configuration needed. The server auto-detects your Nuxt config,
 | `scan_code_usage` | Shows where keys are used — file paths, line numbers, call patterns |
 | `cleanup_unused_translations` | Finds orphan keys + removes them in one step (dry-run by default) |
 
+### Writing reports to file
+
+Five diagnostic tools — `get_missing_translations`, `find_empty_translations`, `find_orphan_keys`, `scan_code_usage`, and `cleanup_unused_translations` — can write their full output to disk so the MCP response stays small.
+
+Enable report writing via the `reportOutput` field in `.i18n-mcp.json`:
+
+```json
+{
+  "reportOutput": true
+}
+```
+
+- **`true`** — reports are written to `.i18n-reports/` (default directory, created automatically).
+- **`"custom/path"`** — reports are written to that directory relative to the project root.
+
+Each tool writes a file named `<toolName>.json` (e.g., `.i18n-reports/get_missing_translations.json`). The file contains the full output plus `generatedAt`, `tool`, and `args` metadata. The MCP response returns only the `summary` object and the `reportFile` path — keeping the agent's context small.
+
+Without `reportOutput`, the tools behave exactly as before and return the full JSON payload in the MCP response.
+
+```jsonc
+// Example: MCP response when reportOutput is enabled
+{
+  "reportFile": ".i18n-reports/get_missing_translations.json",
+  "summary": {
+    "referenceLocale": "de-DE",
+    "targetLocales": ["en-US", "fr-FR"],
+    "layersScanned": ["root"],
+    "totalMissingKeys": 12
+  }
+}
+```
+
 The server also exposes two guided **prompts** (`add-feature-translations`, `fix-missing-translations`) and a **resource template** (`i18n:///{layer}/{file}`) for browsing locale files.
 
 ## Project Config
@@ -133,6 +165,7 @@ For IDE autocompletion, point to the schema:
 | `localeNotes` | Per-locale instructions (e.g., "Formal German using 'Sie'") |
 | `examples` | Few-shot translation examples demonstrating your project's style |
 | `orphanScan` | Per-layer config for orphan key detection: `scanDirs` to scan and `ignorePatterns` to exclude keys by glob pattern |
+| `reportOutput` | `true` for default `.i18n-reports/` dir, or a custom directory path for diagnostic report files |
 
 <details>
 <summary><strong>Full example</strong></summary>
@@ -180,7 +213,8 @@ For IDE autocompletion, point to the schema:
     "app-admin": {
       "scanDirs": ["apps/admin"]
     }
-  }
+  },
+  "reportOutput": true
 }
 ```
 

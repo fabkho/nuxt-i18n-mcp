@@ -1,9 +1,10 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 import { mkdtemp, readFile, writeFile, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
-import { writeLocaleFile, mutateLocaleFile } from '../../src/io/json-writer.js'
+import { join, resolve } from 'node:path'
+import { writeLocaleFile, mutateLocaleFile, writeReportFile } from '../../src/io/json-writer.js'
 import { setNestedValue } from '../../src/io/key-operations.js'
+import { validateReportPath } from '../../src/server.js'
 
 let tempDir: string
 
@@ -145,5 +146,114 @@ describe('mutateLocaleFile', () => {
     const parsed = JSON.parse(content)
     expect(parsed.common.actions.delete).toBe('Delete')
     expect(parsed.common.actions.save).toBe('Save')
+  })
+})
+
+describe('writeReportFile', () => {
+  it('writes JSON with metadata fields', async () => {
+    const filePath = join(tempDir, 'report.json')
+    await writeReportFile(filePath, { summary: { total: 5 }, details: ['a', 'b'] }, {
+      tool: 'get_missing_translations',
+      args: { layer: 'app' },
+    })
+
+    const content = await readFile(filePath, 'utf-8')
+    const parsed = JSON.parse(content)
+    expect(parsed.tool).toBe('get_missing_translations')
+    expect(parsed.args).toEqual({ layer: 'app' })
+    expect(parsed.generatedAt).toBeDefined()
+    expect(new Date(parsed.generatedAt).getTime()).not.toBeNaN()
+    expect(parsed.summary).toEqual({ total: 5 })
+    expect(parsed.details).toEqual(['a', 'b'])
+  })
+
+  it('ends with trailing newline', async () => {
+    const filePath = join(tempDir, 'report.json')
+    await writeReportFile(filePath, { summary: {} }, { tool: 'test', args: {} })
+
+    const content = await readFile(filePath, 'utf-8')
+    expect(content.endsWith('\n')).toBe(true)
+  })
+
+  it('creates parent directories', async () => {
+    const filePath = join(tempDir, 'deep', 'nested', 'report.json')
+    await writeReportFile(filePath, { summary: {} }, { tool: 'test', args: {} })
+
+    const content = await readFile(filePath, 'utf-8')
+    expect(JSON.parse(content).tool).toBe('test')
+  })
+
+  it('overwrites existing file', async () => {
+    const filePath = join(tempDir, 'report.json')
+    await writeFile(filePath, '{"old": true}')
+    await writeReportFile(filePath, { summary: { v: 2 } }, { tool: 'test', args: {} })
+
+    const parsed = JSON.parse(await readFile(filePath, 'utf-8'))
+    expect(parsed.old).toBeUndefined()
+    expect(parsed.summary).toEqual({ v: 2 })
+  })
+
+  it('uses 2-space indentation', async () => {
+    const filePath = join(tempDir, 'report.json')
+    await writeReportFile(filePath, { summary: {} }, { tool: 'test', args: {} })
+
+    const content = await readFile(filePath, 'utf-8')
+    expect(content).toContain('  "tool"')
+  })
+
+  it('places metadata before output fields', async () => {
+    const filePath = join(tempDir, 'report.json')
+    await writeReportFile(filePath, { orphanKeys: [], summary: {} }, { tool: 'find_orphan_keys', args: {} })
+
+    const content = await readFile(filePath, 'utf-8')
+    const keys = Object.keys(JSON.parse(content))
+    expect(keys[0]).toBe('generatedAt')
+    expect(keys[1]).toBe('tool')
+    expect(keys[2]).toBe('args')
+  })
+})
+
+describe('validateReportPath', () => {
+  it('accepts path inside project directory', () => {
+    const baseDir = '/projects/my-app'
+    const absPath = resolve(baseDir, '.i18n-reports/report.json')
+    expect(() => validateReportPath(baseDir, absPath)).not.toThrow()
+  })
+
+  it('accepts path in a subdirectory', () => {
+    const baseDir = '/projects/my-app'
+    const absPath = resolve(baseDir, 'reports/deep/nested/report.json')
+    expect(() => validateReportPath(baseDir, absPath)).not.toThrow()
+  })
+
+  it('rejects path traversal with ../', () => {
+    const baseDir = '/projects/my-app'
+    const absPath = resolve(baseDir, '../../etc/passwd')
+    expect(() => validateReportPath(baseDir, absPath)).toThrow('resolves outside the project directory')
+  })
+
+  it('rejects path that escapes via ..', () => {
+    const baseDir = '/projects/my-app'
+    const absPath = resolve(baseDir, '../other-project/file.json')
+    expect(() => validateReportPath(baseDir, absPath)).toThrow('resolves outside the project directory')
+  })
+
+  it('throws ToolError with INVALID_REPORT_PATH code', async () => {
+    const { ToolError } = await import('../../src/utils/errors.js')
+    const baseDir = '/projects/my-app'
+    const absPath = resolve(baseDir, '../../outside/file.json')
+    try {
+      validateReportPath(baseDir, absPath)
+      expect.unreachable('should have thrown')
+    } catch (error) {
+      expect(error).toBeInstanceOf(ToolError)
+      expect((error as InstanceType<typeof ToolError>).code).toBe('INVALID_REPORT_PATH')
+    }
+  })
+
+  it('accepts path at project root (edge case)', () => {
+    const baseDir = '/projects/my-app'
+    const absPath = resolve(baseDir, 'report.json')
+    expect(() => validateReportPath(baseDir, absPath)).not.toThrow()
   })
 })

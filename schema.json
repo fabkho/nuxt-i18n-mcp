@@ -107,6 +107,20 @@
         },
         "additionalProperties": false
       }
+    },
+    "reportOutput": {
+      "oneOf": [
+        {
+          "type": "string",
+          "description": "Custom directory path (relative to project root) where diagnostic tool reports are written."
+        },
+        {
+          "type": "boolean",
+          "const": true,
+          "description": "Set to true to write reports to the default '.i18n-reports/' directory."
+        }
+      ],
+      "description": "Enable file output for diagnostic tools (get_missing_translations, find_empty_translations, find_orphan_keys, scan_code_usage, cleanup_unused_translations). When set, each tool writes its full JSON report to <reportOutput>/<toolName>.json and returns only a summary in the MCP response. Set to true for the default '.i18n-reports/' directory, or a string for a custom path."
     }
   }
 }

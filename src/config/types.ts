@@ -54,6 +54,8 @@ export interface ProjectConfig {
     /** Glob patterns for translation keys to exclude from orphan detection (e.g., "common.datetime.months.*"). */
     ignorePatterns?: string[]
   }>
+  /** Default output directory for diagnostic tool reports. Set to true for '.i18n-reports/', or a string for a custom relative path. */
+  reportOutput?: string | boolean
 }
 
 /**

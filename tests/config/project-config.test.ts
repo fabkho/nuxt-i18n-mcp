@@ -193,6 +193,19 @@ describe('loadProjectConfig', () => {
     }
   })
 
+  it('accepts reportOutput as a string', async () => {
+    await mkdir(tmpDir, { recursive: true })
+    const configPath = resolve(tmpDir, '.i18n-mcp.json')
+    try {
+      await writeFile(configPath, JSON.stringify({ reportOutput: 'reports' }), 'utf-8')
+      const config = await loadProjectConfig(tmpDir)
+      expect(config).not.toBeNull()
+      expect(config!.reportOutput).toBe('reports')
+    } finally {
+      if (existsSync(configPath)) await unlink(configPath)
+    }
+  })
+
   it('accepts orphanScan without ignorePatterns (optional field)', async () => {
     await mkdir(tmpDir, { recursive: true })
     const configPath = resolve(tmpDir, '.i18n-mcp.json')
@@ -202,6 +215,19 @@ describe('loadProjectConfig', () => {
       }), 'utf-8')
       const config = await loadProjectConfig(tmpDir)
       expect(config!.orphanScan!.root.ignorePatterns).toBeUndefined()
+    } finally {
+      if (existsSync(configPath)) await unlink(configPath)
+    }
+  })
+
+  it('accepts reportOutput as true', async () => {
+    await mkdir(tmpDir, { recursive: true })
+    const configPath = resolve(tmpDir, '.i18n-mcp.json')
+    try {
+      await writeFile(configPath, JSON.stringify({ reportOutput: true }), 'utf-8')
+      const config = await loadProjectConfig(tmpDir)
+      expect(config).not.toBeNull()
+      expect(config!.reportOutput).toBe(true)
     } finally {
       if (existsSync(configPath)) await unlink(configPath)
     }
@@ -220,6 +246,17 @@ describe('loadProjectConfig', () => {
     }
   })
 
+  it('throws when reportOutput is false', async () => {
+    await mkdir(tmpDir, { recursive: true })
+    const configPath = resolve(tmpDir, '.i18n-mcp.json')
+    try {
+      await writeFile(configPath, JSON.stringify({ reportOutput: false }), 'utf-8')
+      await expect(loadProjectConfig(tmpDir)).rejects.toThrow('"reportOutput" must be a non-empty string (directory path) or true')
+    } finally {
+      if (existsSync(configPath)) await unlink(configPath)
+    }
+  })
+
   it('throws when ignorePatterns contains non-strings', async () => {
     await mkdir(tmpDir, { recursive: true })
     const configPath = resolve(tmpDir, '.i18n-mcp.json')
@@ -228,6 +265,39 @@ describe('loadProjectConfig', () => {
         orphanScan: { root: { scanDirs: ['src'], ignorePatterns: ['valid.*', 123] } }
       }), 'utf-8')
       await expect(loadProjectConfig(tmpDir)).rejects.toThrow('"orphanScan.root.ignorePatterns[1]" must be a string')
+    } finally {
+      if (existsSync(configPath)) await unlink(configPath)
+    }
+  })
+
+  it('throws when reportOutput is a number', async () => {
+    await mkdir(tmpDir, { recursive: true })
+    const configPath = resolve(tmpDir, '.i18n-mcp.json')
+    try {
+      await writeFile(configPath, JSON.stringify({ reportOutput: 42 }), 'utf-8')
+      await expect(loadProjectConfig(tmpDir)).rejects.toThrow('"reportOutput" must be a non-empty string (directory path) or true')
+    } finally {
+      if (existsSync(configPath)) await unlink(configPath)
+    }
+  })
+
+  it('throws when reportOutput is an empty string', async () => {
+    await mkdir(tmpDir, { recursive: true })
+    const configPath = resolve(tmpDir, '.i18n-mcp.json')
+    try {
+      await writeFile(configPath, JSON.stringify({ reportOutput: '' }), 'utf-8')
+      await expect(loadProjectConfig(tmpDir)).rejects.toThrow('"reportOutput" must be a non-empty string (directory path) or true')
+    } finally {
+      if (existsSync(configPath)) await unlink(configPath)
+    }
+  })
+
+  it('throws when reportOutput is whitespace-only', async () => {
+    await mkdir(tmpDir, { recursive: true })
+    const configPath = resolve(tmpDir, '.i18n-mcp.json')
+    try {
+      await writeFile(configPath, JSON.stringify({ reportOutput: '   ' }), 'utf-8')
+      await expect(loadProjectConfig(tmpDir)).rejects.toThrow('"reportOutput" must be a non-empty string (directory path) or true')
     } finally {
       if (existsSync(configPath)) await unlink(configPath)
     }

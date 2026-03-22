@@ -3,7 +3,7 @@ import { z } from 'zod'
 import { detectI18nConfig, getCachedConfig } from './config/detector.js'
 import type { I18nConfig, ProjectConfig } from './config/types.js'
 import { readLocaleFile } from './io/json-reader.js'
-import { mutateLocaleFile } from './io/json-writer.js'
+import { mutateLocaleFile, writeReportFile } from './io/json-writer.js'
 import {
   getNestedValue,
   setNestedValue,
@@ -27,6 +27,39 @@ function resolveOrphanScanDirs(
   const layerConfig = config.projectConfig.orphanScan[layer]
   if (!layerConfig) return undefined
   return layerConfig.scanDirs.map(d => resolve(config.rootDir, d))
+}
+
+// ─── Report output helpers ──────────────────────────────────────
+
+const DEFAULT_REPORT_DIR = '.i18n-reports'
+
+export function validateReportPath(baseDir: string, absPath: string): void {
+  const normalizedBase = resolve(baseDir)
+  const normalizedPath = resolve(absPath)
+  if (normalizedPath !== normalizedBase && !normalizedPath.startsWith(normalizedBase + '/')) {
+    throw new ToolError(
+      `Report path "${absPath}" resolves outside the project directory. Path must stay within "${normalizedBase}".`,
+      'INVALID_REPORT_PATH',
+    )
+  }
+}
+
+/**
+ * Resolve the report file path from project config.
+ * Returns undefined if reportOutput is not configured,
+ * or the absolute path to `<reportDir>/<toolName>.json`.
+ */
+function resolveReportFilePath(
+  config: I18nConfig,
+  dir: string,
+  toolName: string,
+): string | undefined {
+  const reportOutput = config.projectConfig?.reportOutput
+  if (!reportOutput) return undefined
+  const relDir = reportOutput === true ? DEFAULT_REPORT_DIR : reportOutput
+  const absPath = resolve(dir, relDir, `${toolName}.json`)
+  validateReportPath(dir, absPath)
+  return absPath
 }
 
 function resolveOrphanIgnorePatterns(
@@ -659,6 +692,17 @@ export function createServer(): McpServer {
           },
         }
 
+        const reportPath = resolveReportFilePath(config, dir, 'get_missing_translations')
+        if (reportPath) {
+          await writeReportFile(reportPath, output, {
+            tool: 'get_missing_translations',
+            args: { layer, referenceLocale, targetLocales },
+          })
+          return {
+            content: [{ type: 'text' as const, text: JSON.stringify({ reportFile: reportPath, summary: output.summary }, null, 2) }],
+          }
+        }
+
         return {
           content: [
             {
@@ -754,6 +798,17 @@ export function createServer(): McpServer {
             localesChecked: localesToCheck.map(l => l.code),
             layersChecked: layersToScan.map(d => d.layer),
           },
+        }
+
+        const reportPath = resolveReportFilePath(config, dir, 'find_empty_translations')
+        if (reportPath) {
+          await writeReportFile(reportPath, output, {
+            tool: 'find_empty_translations',
+            args: { layer, locale },
+          })
+          return {
+            content: [{ type: 'text' as const, text: JSON.stringify({ reportFile: reportPath, summary: output.summary }, null, 2) }],
+          }
         }
 
         return {
@@ -1439,11 +1494,22 @@ export function createServer(): McpServer {
         }
 
         if (allTranslationKeys.size === 0) {
+          const emptyOutput = { orphanKeys: [], summary: { totalKeys: 0, orphanCount: 0, filesScanned: 0, message: 'No translation keys found in locale files.' } }
+          const reportPath = resolveReportFilePath(config, dir, 'find_orphan_keys')
+          if (reportPath) {
+            await writeReportFile(reportPath, emptyOutput, {
+              tool: 'find_orphan_keys',
+              args: { layer, locale, scanDirs, excludeDirs },
+            })
+            return {
+              content: [{ type: 'text' as const, text: JSON.stringify({ reportFile: reportPath, summary: emptyOutput.summary }, null, 2) }],
+            }
+          }
           return {
             content: [
               {
                 type: 'text' as const,
-                text: JSON.stringify({ orphanKeys: [], summary: { totalKeys: 0, orphanCount: 0, filesScanned: 0, message: 'No translation keys found in locale files.' } }, null, 2),
+                text: JSON.stringify(emptyOutput, null, 2),
               },
             ],
           }
@@ -1521,6 +1587,17 @@ export function createServer(): McpServer {
                 line: dk.line,
               }))
             : undefined,
+        }
+
+        const reportPath = resolveReportFilePath(config, dir, 'find_orphan_keys')
+        if (reportPath) {
+          await writeReportFile(reportPath, output, {
+            tool: 'find_orphan_keys',
+            args: { layer, locale, scanDirs, excludeDirs },
+          })
+          return {
+            content: [{ type: 'text' as const, text: JSON.stringify({ reportFile: reportPath, summary: output.summary }, null, 2) }],
+          }
         }
 
         return {
@@ -1623,6 +1700,17 @@ export function createServer(): McpServer {
           }))
         }
 
+        const reportPath = resolveReportFilePath(config, dir, 'scan_code_usage')
+        if (reportPath) {
+          await writeReportFile(reportPath, output, {
+            tool: 'scan_code_usage',
+            args: { keys, scanDirs, excludeDirs },
+          })
+          return {
+            content: [{ type: 'text' as const, text: JSON.stringify({ reportFile: reportPath, summary: output.summary }, null, 2) }],
+          }
+        }
+
         return {
           content: [
             {
@@ -1711,10 +1799,21 @@ export function createServer(): McpServer {
 
         const totalKeys = [...keysByLayer.values()].reduce((sum, keys) => sum + keys.length, 0)
         if (totalKeys === 0) {
+          const emptyOutput = { orphanKeys: {}, removed: {}, summary: { totalKeys: 0, orphanCount: 0, message: 'No translation keys found.' } }
+          const emptyReportPath = resolveReportFilePath(config, dir, 'cleanup_unused_translations')
+          if (emptyReportPath) {
+            await writeReportFile(emptyReportPath, emptyOutput, {
+              tool: 'cleanup_unused_translations',
+              args: { layer, locale, scanDirs, excludeDirs, dryRun },
+            })
+            return {
+              content: [{ type: 'text' as const, text: JSON.stringify({ reportFile: emptyReportPath, summary: emptyOutput.summary }, null, 2) }],
+            }
+          }
           return {
             content: [{
               type: 'text' as const,
-              text: JSON.stringify({ orphanKeys: {}, removed: {}, summary: { totalKeys: 0, orphanCount: 0, message: 'No translation keys found.' } }, null, 2),
+              text: JSON.stringify(emptyOutput, null, 2),
             }],
           }
         }
@@ -1771,13 +1870,24 @@ export function createServer(): McpServer {
           if (dynamicMatchedCount > 0) messageParts.push(`${dynamicMatchedCount} key(s) were excluded by dynamic pattern matching.`)
           if (ignoredCount > 0) messageParts.push(`${ignoredCount} key(s) were excluded by ignore patterns.`)
           if (dynamicMatchedCount === 0 && ignoredCount === 0) messageParts.push('All translation keys are referenced in code.')
+          const zeroOutput = {
+            orphanKeys: {},
+            summary: { totalKeys, orphanCount: 0, dynamicMatchedCount, ignoredCount, filesScanned: totalFilesScanned, message: messageParts.join(' ') },
+          }
+          const zeroReportPath = resolveReportFilePath(config, dir, 'cleanup_unused_translations')
+          if (zeroReportPath) {
+            await writeReportFile(zeroReportPath, zeroOutput, {
+              tool: 'cleanup_unused_translations',
+              args: { layer, locale, scanDirs, excludeDirs, dryRun },
+            })
+            return {
+              content: [{ type: 'text' as const, text: JSON.stringify({ reportFile: zeroReportPath, summary: zeroOutput.summary }, null, 2) }],
+            }
+          }
           return {
             content: [{
               type: 'text' as const,
-              text: JSON.stringify({
-                orphanKeys: {},
-                summary: { totalKeys, orphanCount: 0, dynamicMatchedCount, ignoredCount, filesScanned: totalFilesScanned, message: messageParts.join(' ') },
-              }, null, 2),
+              text: JSON.stringify(zeroOutput, null, 2),
             }],
           }
         }
@@ -1800,6 +1910,16 @@ export function createServer(): McpServer {
           if (allDynamicKeys.length > 0) {
             output.dynamicKeyWarning = `${allDynamicKeys.length} dynamic key reference(s) found. Some "orphan" keys may be used via dynamic keys. Review before removing.`
             output.dynamicKeys = allDynamicKeys
+          }
+          const dryRunReportPath = resolveReportFilePath(config, dir, 'cleanup_unused_translations')
+          if (dryRunReportPath) {
+            await writeReportFile(dryRunReportPath, output, {
+              tool: 'cleanup_unused_translations',
+              args: { layer, locale, scanDirs, excludeDirs, dryRun },
+            })
+            return {
+              content: [{ type: 'text' as const, text: JSON.stringify({ reportFile: dryRunReportPath, summary: output.summary }, null, 2) }],
+            }
           }
           return {
             content: [{ type: 'text' as const, text: JSON.stringify(output, null, 2) }],
@@ -1833,22 +1953,35 @@ export function createServer(): McpServer {
           removedByLayer[layerName] = orphans
         }
 
+        const removalOutput = {
+          removed: removedByLayer,
+          summary: {
+            dryRun: false,
+            totalKeys,
+            removedCount: orphanCount,
+            dynamicMatchedCount,
+            ignoredCount,
+            remainingCount: totalKeys - orphanCount,
+            filesWritten: totalFilesWritten,
+            filesScanned: totalFilesScanned,
+          },
+        }
+
+        const removalReportPath = resolveReportFilePath(config, dir, 'cleanup_unused_translations')
+        if (removalReportPath) {
+          await writeReportFile(removalReportPath, removalOutput, {
+            tool: 'cleanup_unused_translations',
+            args: { layer, locale, scanDirs, excludeDirs, dryRun },
+          })
+          return {
+            content: [{ type: 'text' as const, text: JSON.stringify({ reportFile: removalReportPath, summary: removalOutput.summary }, null, 2) }],
+          }
+        }
+
         return {
           content: [{
             type: 'text' as const,
-            text: JSON.stringify({
-              removed: removedByLayer,
-              summary: {
-                dryRun: false,
-                totalKeys,
-                removedCount: orphanCount,
-                dynamicMatchedCount,
-                ignoredCount,
-                remainingCount: totalKeys - orphanCount,
-                filesWritten: totalFilesWritten,
-                filesScanned: totalFilesScanned,
-              },
-            }, null, 2),
+            text: JSON.stringify(removalOutput, null, 2),
           }],
         }
       } catch (error) {
