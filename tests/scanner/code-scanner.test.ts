@@ -2,7 +2,7 @@ import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest'
 import { mkdir, writeFile, rm } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { extractKeys, scanSourceFiles, toRelativePath, buildDynamicKeyRegexes } from '../../src/scanner/code-scanner.js'
+import { extractKeys, scanSourceFiles, toRelativePath, buildDynamicKeyRegexes, buildIgnorePatternRegexes } from '../../src/scanner/code-scanner.js'
 
 const tmpDir = join(dirname(fileURLToPath(import.meta.url)), '../../.tmp-test/scanner')
 
@@ -368,6 +368,70 @@ describe('buildDynamicKeyRegexes', () => {
     expect(regexes).toHaveLength(1)
     expect(regexes[0].test('prefix.computed.title')).toBe(true)
     expect(regexes[0].test('prefix.computed.title.extra')).toBe(false)
+  })
+})
+
+describe('buildIgnorePatternRegexes', () => {
+  it('matches single-segment wildcard (*)', () => {
+    const [re] = buildIgnorePatternRegexes(['common.actions.*'])
+    expect(re.test('common.actions.save')).toBe(true)
+    expect(re.test('common.actions.delete')).toBe(true)
+    expect(re.test('common.actions.nested.key')).toBe(false)
+    expect(re.test('common.actions.')).toBe(true)
+  })
+
+  it('matches multi-segment wildcard (**)', () => {
+    const [re] = buildIgnorePatternRegexes(['common.datetime.**'])
+    expect(re.test('common.datetime.months.january')).toBe(true)
+    expect(re.test('common.datetime.days')).toBe(true)
+    expect(re.test('common.datetime.')).toBe(true)
+    expect(re.test('common.other.months')).toBe(false)
+  })
+
+  it('matches wildcard in middle of pattern', () => {
+    const [re] = buildIgnorePatternRegexes(['pages.*.title'])
+    expect(re.test('pages.home.title')).toBe(true)
+    expect(re.test('pages.admin.title')).toBe(true)
+    expect(re.test('pages.deep.nested.title')).toBe(false)
+    expect(re.test('pages..title')).toBe(true)
+  })
+
+  it('matches ** in middle of pattern', () => {
+    const [re] = buildIgnorePatternRegexes(['pages.**.title'])
+    expect(re.test('pages.home.title')).toBe(true)
+    expect(re.test('pages.deep.nested.title')).toBe(true)
+    expect(re.test('pages.title')).toBe(false)
+  })
+
+  it('matches exact pattern without wildcards', () => {
+    const [re] = buildIgnorePatternRegexes(['common.actions.save'])
+    expect(re.test('common.actions.save')).toBe(true)
+    expect(re.test('common.actions.saves')).toBe(false)
+    expect(re.test('common.actions.sav')).toBe(false)
+  })
+
+  it('handles multiple patterns', () => {
+    const regexes = buildIgnorePatternRegexes(['common.datetime.**', 'pages.*.title'])
+    expect(regexes).toHaveLength(2)
+    expect(regexes[0].test('common.datetime.months.jan')).toBe(true)
+    expect(regexes[1].test('pages.home.title')).toBe(true)
+  })
+
+  it('returns empty array for empty input', () => {
+    expect(buildIgnorePatternRegexes([])).toHaveLength(0)
+  })
+
+  it('escapes special regex characters', () => {
+    const [re] = buildIgnorePatternRegexes(['path.with+special.key'])
+    expect(re.test('path.with+special.key')).toBe(true)
+    expect(re.test('path.withXspecial.key')).toBe(false)
+  })
+
+  it('anchors patterns (no partial matches)', () => {
+    const [re] = buildIgnorePatternRegexes(['common.*'])
+    expect(re.test('common.save')).toBe(true)
+    expect(re.test('prefix.common.save')).toBe(false)
+    expect(re.test('common.save.extra')).toBe(false)
   })
 })
 

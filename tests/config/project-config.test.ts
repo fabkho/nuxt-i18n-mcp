@@ -172,6 +172,66 @@ describe('loadProjectConfig', () => {
       if (existsSync(configPath)) await unlink(configPath)
     }
   })
+
+  it('accepts valid orphanScan config with ignorePatterns', async () => {
+    await mkdir(tmpDir, { recursive: true })
+    const configPath = resolve(tmpDir, '.i18n-mcp.json')
+    try {
+      await writeFile(configPath, JSON.stringify({
+        orphanScan: {
+          root: {
+            scanDirs: ['apps/shop'],
+            ignorePatterns: ['common.datetime.**', 'pages.*.title']
+          }
+        }
+      }), 'utf-8')
+      const config = await loadProjectConfig(tmpDir)
+      expect(config).not.toBeNull()
+      expect(config!.orphanScan!.root.ignorePatterns).toEqual(['common.datetime.**', 'pages.*.title'])
+    } finally {
+      if (existsSync(configPath)) await unlink(configPath)
+    }
+  })
+
+  it('accepts orphanScan without ignorePatterns (optional field)', async () => {
+    await mkdir(tmpDir, { recursive: true })
+    const configPath = resolve(tmpDir, '.i18n-mcp.json')
+    try {
+      await writeFile(configPath, JSON.stringify({
+        orphanScan: { root: { scanDirs: ['src'] } }
+      }), 'utf-8')
+      const config = await loadProjectConfig(tmpDir)
+      expect(config!.orphanScan!.root.ignorePatterns).toBeUndefined()
+    } finally {
+      if (existsSync(configPath)) await unlink(configPath)
+    }
+  })
+
+  it('throws when ignorePatterns is not an array', async () => {
+    await mkdir(tmpDir, { recursive: true })
+    const configPath = resolve(tmpDir, '.i18n-mcp.json')
+    try {
+      await writeFile(configPath, JSON.stringify({
+        orphanScan: { root: { scanDirs: ['src'], ignorePatterns: 'not-an-array' } }
+      }), 'utf-8')
+      await expect(loadProjectConfig(tmpDir)).rejects.toThrow('"orphanScan.root.ignorePatterns" must be an array of strings')
+    } finally {
+      if (existsSync(configPath)) await unlink(configPath)
+    }
+  })
+
+  it('throws when ignorePatterns contains non-strings', async () => {
+    await mkdir(tmpDir, { recursive: true })
+    const configPath = resolve(tmpDir, '.i18n-mcp.json')
+    try {
+      await writeFile(configPath, JSON.stringify({
+        orphanScan: { root: { scanDirs: ['src'], ignorePatterns: ['valid.*', 123] } }
+      }), 'utf-8')
+      await expect(loadProjectConfig(tmpDir)).rejects.toThrow('"orphanScan.root.ignorePatterns[1]" must be a string')
+    } finally {
+      if (existsSync(configPath)) await unlink(configPath)
+    }
+  })
 })
 
 describe('parent directory traversal', () => {

@@ -96,6 +96,13 @@
             "items": {
               "type": "string"
             }
+          },
+          "ignorePatterns": {
+            "type": "array",
+            "description": "Glob patterns for translation keys to exclude from orphan detection (e.g., \"common.datetime.months.*\"). Use * to match a single key segment, ** to match any depth.",
+            "items": {
+              "type": "string"
+            }
           }
         },
         "additionalProperties": false

@@ -221,3 +221,33 @@ export async function scanSourceFiles(rootDir: string, excludeDirs?: string[]): 
 export function toRelativePath(filePath: string, rootDir: string): string {
   return relative(rootDir, filePath)
 }
+
+/**
+ * Convert dot-path glob patterns (e.g., "common.datetime.**", "pages.*.title")
+ * into RegExp objects for matching translation keys.
+ *
+ * - `**` matches any number of dot-separated segments (including zero)
+ * - `*` matches exactly one segment (no dots)
+ */
+export function buildIgnorePatternRegexes(patterns: string[]): RegExp[] {
+  return patterns.map((pattern) => {
+    let regexStr = ''
+    let i = 0
+    while (i < pattern.length) {
+      if (pattern[i] === '*' && pattern[i + 1] === '*') {
+        regexStr += '.*'
+        i += 2
+      } else if (pattern[i] === '*') {
+        regexStr += '[^.]*'
+        i += 1
+      } else if ('.+?^${}()|[]\\'.includes(pattern[i])) {
+        regexStr += '\\' + pattern[i]
+        i += 1
+      } else {
+        regexStr += pattern[i]
+        i += 1
+      }
+    }
+    return new RegExp(`^${regexStr}$`)
+  })
+}

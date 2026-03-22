@@ -13,7 +13,7 @@ import {
   renameNestedKey,
   validateTranslationValue,
 } from './io/key-operations.js'
-import { scanSourceFiles, toRelativePath, buildDynamicKeyRegexes } from './scanner/code-scanner.js'
+import { scanSourceFiles, toRelativePath, buildDynamicKeyRegexes, buildIgnorePatternRegexes } from './scanner/code-scanner.js'
 import { log } from './utils/logger.js'
 import { ToolError } from './utils/errors.js'
 import { join, resolve } from 'node:path'
@@ -27,6 +27,16 @@ function resolveOrphanScanDirs(
   const layerConfig = config.projectConfig.orphanScan[layer]
   if (!layerConfig) return undefined
   return layerConfig.scanDirs.map(d => resolve(config.rootDir, d))
+}
+
+function resolveOrphanIgnorePatterns(
+  config: I18nConfig,
+  layer: string | undefined,
+): string[] | undefined {
+  if (!layer || !config.projectConfig?.orphanScan) return undefined
+  const layerConfig = config.projectConfig.orphanScan[layer]
+  if (!layerConfig?.ignorePatterns?.length) return undefined
+  return layerConfig.ignorePatterns
 }
 
 // ─── Shared helpers ───────────────────────────────────────────────
@@ -1460,13 +1470,18 @@ export function createServer(): McpServer {
 
         // Find orphan keys: translation keys not referenced in source code
         const dynamicKeyRegexes = buildDynamicKeyRegexes(allDynamicKeys)
+        const ignorePatterns = resolveOrphanIgnorePatterns(config, layer)
+        const ignoreRegexes = ignorePatterns ? buildIgnorePatternRegexes(ignorePatterns) : []
 
         const orphanKeys: Array<{ key: string; layer: string }> = []
         let dynamicMatchedCount = 0
+        let ignoredCount = 0
         for (const [key, keyLayer] of allTranslationKeys) {
           if (!combinedUniqueKeys.has(key)) {
             if (dynamicKeyRegexes.some(re => re.test(key))) {
               dynamicMatchedCount++
+            } else if (ignoreRegexes.length > 0 && ignoreRegexes.some(re => re.test(key))) {
+              ignoredCount++
             } else {
               orphanKeys.push({ key, layer: keyLayer })
             }
@@ -1489,6 +1504,7 @@ export function createServer(): McpServer {
             totalKeys: allTranslationKeys.size,
             orphanCount: orphanKeys.length,
             dynamicMatchedCount,
+            ignoredCount,
             usedCount: allTranslationKeys.size - orphanKeys.length,
             filesScanned: totalFilesScanned,
             layersChecked: layersToCheck.map(d => d.layer),
@@ -1724,15 +1740,22 @@ export function createServer(): McpServer {
 
         // Find orphan keys per layer
         const dynamicKeyRegexes = buildDynamicKeyRegexes(allDynamicKeys)
+        const ignorePatterns = resolveOrphanIgnorePatterns(config, layer)
+        const ignoreRegexes = ignorePatterns ? buildIgnorePatternRegexes(ignorePatterns) : []
 
         const orphansByLayer: Record<string, string[]> = {}
         let orphanCount = 0
         let dynamicMatchedCount = 0
+        let ignoredCount = 0
         for (const [layerName, keys] of keysByLayer) {
           const orphans = keys.filter((k) => {
             if (combinedUniqueKeys.has(k)) return false
             if (dynamicKeyRegexes.some(re => re.test(k))) {
               dynamicMatchedCount++
+              return false
+            }
+            if (ignoreRegexes.length > 0 && ignoreRegexes.some(re => re.test(k))) {
+              ignoredCount++
               return false
             }
             return true
@@ -1744,15 +1767,16 @@ export function createServer(): McpServer {
         }
 
         if (orphanCount === 0) {
-          const message = dynamicMatchedCount > 0
-            ? `No orphan keys found. ${dynamicMatchedCount} key(s) were excluded by dynamic pattern matching.`
-            : 'No orphan keys found. All translation keys are referenced in code.'
+          const messageParts: string[] = ['No orphan keys found.']
+          if (dynamicMatchedCount > 0) messageParts.push(`${dynamicMatchedCount} key(s) were excluded by dynamic pattern matching.`)
+          if (ignoredCount > 0) messageParts.push(`${ignoredCount} key(s) were excluded by ignore patterns.`)
+          if (dynamicMatchedCount === 0 && ignoredCount === 0) messageParts.push('All translation keys are referenced in code.')
           return {
             content: [{
               type: 'text' as const,
               text: JSON.stringify({
                 orphanKeys: {},
-                summary: { totalKeys, orphanCount: 0, dynamicMatchedCount, filesScanned: totalFilesScanned, message },
+                summary: { totalKeys, orphanCount: 0, dynamicMatchedCount, ignoredCount, filesScanned: totalFilesScanned, message: messageParts.join(' ') },
               }, null, 2),
             }],
           }
@@ -1767,9 +1791,10 @@ export function createServer(): McpServer {
               totalKeys,
               orphanCount,
               dynamicMatchedCount,
+              ignoredCount,
               usedCount: totalKeys - orphanCount,
               filesScanned: totalFilesScanned,
-              message: `Found ${orphanCount} orphan key(s). ${dynamicMatchedCount > 0 ? `${dynamicMatchedCount} key(s) matched dynamic patterns and were excluded. ` : ''}Call again with dryRun: false to remove them.`,
+              message: `Found ${orphanCount} orphan key(s). ${dynamicMatchedCount > 0 ? `${dynamicMatchedCount} key(s) matched dynamic patterns and were excluded. ` : ''}${ignoredCount > 0 ? `${ignoredCount} key(s) matched ignore patterns and were excluded. ` : ''}Call again with dryRun: false to remove them.`,
             },
           }
           if (allDynamicKeys.length > 0) {
@@ -1818,6 +1843,7 @@ export function createServer(): McpServer {
                 totalKeys,
                 removedCount: orphanCount,
                 dynamicMatchedCount,
+                ignoredCount,
                 remainingCount: totalKeys - orphanCount,
                 filesWritten: totalFilesWritten,
                 filesScanned: totalFilesScanned,
