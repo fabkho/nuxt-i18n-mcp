@@ -1,5 +1,20 @@
 # Changelog
 
+## [1.4.0](https://github.com/fabkho/nuxt-i18n-mcp/compare/v1.3.0...v1.4.0) (2026-03-22)
+
+
+### Features
+
+* add ignorePatterns for orphan key detection ([f02f1c6](https://github.com/fabkho/nuxt-i18n-mcp/commit/f02f1c6c27c54d3680f5edeefd22bfa749b2e255))
+* add ignorePatterns for orphan key detection ([e8449a3](https://github.com/fabkho/nuxt-i18n-mcp/commit/e8449a374064c3efa2740c685672a319c39beb1a)), closes [#22](https://github.com/fabkho/nuxt-i18n-mcp/issues/22)
+* add reportFile parameter to 5 diagnostic tools ([72e8660](https://github.com/fabkho/nuxt-i18n-mcp/commit/72e8660f8d13ceceda9943a484f347eaaef5e871)), closes [#23](https://github.com/fabkho/nuxt-i18n-mcp/issues/23)
+* write diagnostic tool reports to file ([40aabe7](https://github.com/fabkho/nuxt-i18n-mcp/commit/40aabe7bde66802faa41f1d54db1017a68bdf217))
+
+
+### Bug Fixes
+
+* use static unlink import, reject empty reportOutput strings ([6167375](https://github.com/fabkho/nuxt-i18n-mcp/commit/6167375aa010e1c88f21c6ea88f189d5515dea8f))
+
 ## [1.3.0](https://github.com/fabkho/nuxt-i18n-mcp/compare/v1.2.0...v1.3.0) (2026-03-21)
 
 
