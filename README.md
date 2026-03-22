@@ -132,6 +132,7 @@ For IDE autocompletion, point to the schema:
 | `translationPrompt` | System prompt prepended to all translation requests |
 | `localeNotes` | Per-locale instructions (e.g., "Formal German using 'Sie'") |
 | `examples` | Few-shot translation examples demonstrating your project's style |
+| `orphanScan` | Per-layer config for orphan key detection: `scanDirs` to scan and `ignorePatterns` to exclude keys by glob pattern |
 
 <details>
 <summary><strong>Full example</strong></summary>
@@ -170,7 +171,16 @@ For IDE autocompletion, point to the schema:
       "en-US": "Save",
       "note": "Concise, imperative"
     }
-  ]
+  ],
+  "orphanScan": {
+    "shared": {
+      "scanDirs": ["apps/shop", "apps/admin", "packages/shared"],
+      "ignorePatterns": ["common.datetime.**", "common.countries.*"]
+    },
+    "app-admin": {
+      "scanDirs": ["apps/admin"]
+    }
+  }
 }
 ```
 
