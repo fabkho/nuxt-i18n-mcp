@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.4.1](https://github.com/fabkho/nuxt-i18n-mcp/compare/v1.4.0...v1.4.1) (2026-03-23)
+
+
+### Bug Fixes
+
+* use source-level shebang for proper npx execution ([bea11b2](https://github.com/fabkho/nuxt-i18n-mcp/commit/bea11b2451fcedf968730624be67686d89201186))
+* use source-level shebang for proper npx execution ([e34d7cd](https://github.com/fabkho/nuxt-i18n-mcp/commit/e34d7cd59e4eb2a83290d9767068fce8bde48170))
+
 ## [1.4.0](https://github.com/fabkho/nuxt-i18n-mcp/compare/v1.3.0...v1.4.0) (2026-03-22)
 
 
