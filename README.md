@@ -29,7 +29,7 @@ Add to `.vscode/mcp.json`:
     "nuxt-i18n-mcp": {
       "type": "stdio",
       "command": "npx",
-      "args": ["nuxt-i18n-mcp"]
+      "args": ["nuxt-i18n-mcp@latest"]
     }
   }
 }
@@ -47,7 +47,7 @@ Add to `.zed/settings.json`:
   "context_servers": {
     "nuxt-i18n-mcp": {
       "command": "npx",
-      "args": ["nuxt-i18n-mcp"]
+      "args": ["nuxt-i18n-mcp@latest"]
     }
   }
 }
@@ -65,7 +65,7 @@ Add to `claude_desktop_config.json`:
   "mcpServers": {
     "nuxt-i18n-mcp": {
       "command": "npx",
-      "args": ["nuxt-i18n-mcp"]
+      "args": ["nuxt-i18n-mcp@latest"]
     }
   }
 }
