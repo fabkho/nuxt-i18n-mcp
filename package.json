@@ -34,7 +34,7 @@
     "schema.json"
   ],
   "scripts": {
-    "build": "tsdown && chmod +x dist/index.js",
+    "build": "tsdown",
     "dev": "tsdown --watch",
     "start": "node dist/index.js",
     "test": "vitest run",
