@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.5.0](https://github.com/fabkho/nuxt-i18n-mcp/compare/v1.4.1...v1.5.0) (2026-03-25)
+
+
+### Features
+
+* add dryRun support to add_translations and update_translations ([#35](https://github.com/fabkho/nuxt-i18n-mcp/issues/35)) ([f1979b6](https://github.com/fabkho/nuxt-i18n-mcp/commit/f1979b68cccf733be4ca5211d50d8c3cd4ecb7e6))
+* monorepo-aware Nuxt app discovery ([#33](https://github.com/fabkho/nuxt-i18n-mcp/issues/33)) ([c57b6cc](https://github.com/fabkho/nuxt-i18n-mcp/commit/c57b6cc790be42c4005d0f479764b1416b4a0a06))
+
 ## [1.4.1](https://github.com/fabkho/nuxt-i18n-mcp/compare/v1.4.0...v1.4.1) (2026-03-23)
 
 
