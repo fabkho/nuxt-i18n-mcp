@@ -15,7 +15,7 @@ import {
 } from './io/key-operations.js'
 import { scanSourceFiles, toRelativePath, buildDynamicKeyRegexes, buildIgnorePatternRegexes } from './scanner/code-scanner.js'
 import { log } from './utils/logger.js'
-import { ToolError } from './utils/errors.js'
+import { FileIOError, ToolError } from './utils/errors.js'
 import { join, resolve } from 'node:path'
 import { readdir } from 'node:fs/promises'
 
@@ -144,8 +144,15 @@ async function applyTranslations(
       let data: Record<string, unknown> = {}
       try {
         data = await readLocaleFile(filePath)
-      } catch {
-        // File doesn't exist yet — treat all keys as applicable
+      } catch (err) {
+        if (err instanceof FileIOError && err.message.startsWith('File not found')) {
+          // File doesn't exist yet — treat all keys as applicable
+        } else {
+          throw new ToolError(
+            `Failed to read locale file ${filePath}: ${err instanceof Error ? err.message : String(err)}`,
+            'LOCALE_READ_ERROR',
+          )
+        }
       }
       for (const { key, value, localeCode } of entries) {
         const exists = hasNestedKey(data, key)
