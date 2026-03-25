@@ -1,10 +1,11 @@
 import { vi } from 'vitest'
 import { resolve } from 'node:path'
-import { createPlaygroundConfig, createAppAdminConfig } from './config.js'
+import { createPlaygroundConfig, createAppAdminConfig, createMonorepoConfig, projectRootDir } from './config.js'
 import type { I18nConfig } from '../../src/config/types.js'
 
-export const playgroundDir = resolve(import.meta.dirname, '../../playground')
-export const appAdminDir = resolve(import.meta.dirname, '../../playground/app-admin')
+export const monorepoDir = projectRootDir
+export const playgroundDir = resolve(projectRootDir, 'playground')
+export const appAdminDir = resolve(playgroundDir, 'app-admin')
 
 /**
  * Register a `vi.mock` for `../../src/config/detector.js` that replaces
@@ -52,6 +53,8 @@ export function registerDetectorMock(): void {
           config = createPlaygroundConfig()
         } else if (projectDir === appAdminDir) {
           config = createAppAdminConfig()
+        } else if (projectDir === monorepoDir) {
+          config = createMonorepoConfig()
         } else {
           throw new Error(`No fixture config for ${projectDir}`)
         }

@@ -1,13 +1,13 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest'
 import { resolve } from 'node:path'
-import { registerDetectorMock, playgroundDir, appAdminDir } from '../fixtures/mock-detector.js'
+import { registerDetectorMock, playgroundDir, appAdminDir, monorepoDir } from '../fixtures/mock-detector.js'
 import type { I18nConfig } from '../../src/config/types.js'
 
 // Register the shared detector mock (vi.mock is hoisted by Vitest)
 registerDetectorMock()
 
 // Import after mock so the mock is in place
-const { detectI18nConfig, clearConfigCache, getCachedConfig } = await import('../../src/config/detector.js')
+const { detectI18nConfig, clearConfigCache, getCachedConfig, discoverNuxtApps } = await import('../../src/config/detector.js')
 
 describe('detectI18nConfig against playground', () => {
   let config: I18nConfig
@@ -155,5 +155,74 @@ describe('detectI18nConfig against playground/app-admin (layer)', () => {
   it('getCachedConfig returns app-admin config after detection', () => {
     const cached = getCachedConfig()
     expect(cached).toBe(config)
+  })
+})
+
+describe('detectI18nConfig against monorepo root (no nuxt.config)', () => {
+  let config: I18nConfig
+
+  beforeAll(async () => {
+    clearConfigCache()
+    config = await detectI18nConfig(monorepoDir)
+  })
+
+  afterAll(() => {
+    clearConfigCache()
+  })
+
+  it('sets rootDir to the monorepo discovery root', () => {
+    expect(config).toBeDefined()
+    expect(config.rootDir).toBe(monorepoDir)
+  })
+
+  it('discovers locale directories from child Nuxt apps', () => {
+    expect(config.localeDirs.length).toBeGreaterThanOrEqual(1)
+    const layers = config.localeDirs.map(d => d.layer)
+    expect(layers).toContain('playground')
+  })
+
+  it('uses playground layer name (not "root") for discovered app', () => {
+    const playgroundLayer = config.localeDirs.find(d => d.layer === 'playground')
+    expect(playgroundLayer).toBeDefined()
+    expect(playgroundLayer!.path).toBe(resolve(playgroundDir, 'i18n/locales'))
+  })
+
+  it('detects default locale from the first discovered app', () => {
+    expect(config.defaultLocale).toBe('de')
+  })
+
+  it('detects all 4 locales', () => {
+    const codes = config.locales.map(l => l.code)
+    expect(codes).toHaveLength(4)
+    expect(codes).toContain('de')
+    expect(codes).toContain('en')
+    expect(codes).toContain('fr')
+    expect(codes).toContain('es')
+  })
+
+  it('includes layerRootDirs from discovered apps', () => {
+    expect(config.layerRootDirs).toContain(playgroundDir)
+  })
+})
+
+describe('discoverNuxtApps (real filesystem)', () => {
+  it('finds playground as a Nuxt app with i18n under the project root', async () => {
+    const apps = await discoverNuxtApps(monorepoDir)
+    expect(apps).toContain(playgroundDir)
+  })
+
+  it('does not descend into playground to find app-admin separately', async () => {
+    const apps = await discoverNuxtApps(monorepoDir)
+    expect(apps).not.toContain(appAdminDir)
+  })
+
+  it('returns empty array for directory with no Nuxt apps', async () => {
+    const apps = await discoverNuxtApps(resolve(monorepoDir, 'src'))
+    expect(apps).toEqual([])
+  })
+
+  it('finds app-admin when given its directory directly (not via parent discovery)', async () => {
+    const apps = await discoverNuxtApps(appAdminDir)
+    expect(apps).toContain(appAdminDir)
   })
 })

@@ -1,7 +1,8 @@
 import { resolve } from 'node:path'
 import type { I18nConfig } from '../../src/config/types.js'
 
-const playgroundDir = resolve(import.meta.dirname, '../../playground')
+export const projectRootDir = resolve(import.meta.dirname, '../..')
+const playgroundDir = resolve(projectRootDir, 'playground')
 const appAdminDir = resolve(playgroundDir, 'app-admin')
 
 const locales = [
@@ -81,14 +82,26 @@ export function createPlaygroundConfig(): I18nConfig {
 }
 
 /**
- * Fixture config matching what `detectI18nConfig(appAdminDir)` would return.
- *
- * When Nuxt is loaded from `playground/app-admin`, layers resolve as:
- *   - _layers[0] = app-admin itself → layer name `'root'` (the cwd)
- *   - _layers[1] = ../playground    → layer name `'playground'` (basename)
- *
- * So there are two locale directories.
+ * Fixture config for monorepo discovery from the project root (no nuxt.config).
+ * Discovers `playground/` as a Nuxt app with i18n. `rootDir` = discovery root.
  */
+export function createMonorepoConfig(): I18nConfig {
+  return {
+    rootDir: projectRootDir,
+    defaultLocale: 'de',
+    fallbackLocale: { default: ['en'] },
+    locales: structuredClone(locales),
+    localeDirs: [
+      {
+        path: resolve(playgroundDir, 'i18n/locales'),
+        layer: 'playground',
+        layerRootDir: playgroundDir,
+      },
+    ],
+    layerRootDirs: [playgroundDir],
+    projectConfig: structuredClone(projectConfig),
+  }
+}
 export function createAppAdminConfig(): I18nConfig {
   return {
     rootDir: appAdminDir,
