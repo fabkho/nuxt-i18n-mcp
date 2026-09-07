@@ -52,7 +52,11 @@ async function tempDir(): Promise<string> {
   return dir
 }
 
-/** A three-locale project translating from `en`, with the memory on or off. */
+/**
+ * A three-locale project translating from `en`. `translationMemory` is left
+ * out of the config unless a test says otherwise, so the default is what most
+ * of this file exercises.
+ */
 async function createProject(opts: { translationMemory?: boolean } = {}): Promise<string> {
   const dir = await tempDir()
   const locales = join(dir, 'i18n', 'locales')
@@ -61,7 +65,7 @@ async function createProject(opts: { translationMemory?: boolean } = {}): Promis
     localeDirs: [{ path: 'i18n/locales', layer: 'root' }],
     defaultLocale: 'en',
     locales: ['en', 'de', 'fr'],
-    ...(opts.translationMemory ? { translationMemory: true } : {}),
+    ...(opts.translationMemory === undefined ? {} : { translationMemory: opts.translationMemory }),
   }, null, 2))
   await writeFile(join(locales, 'en.json'), JSON.stringify(SOURCE, null, 2))
   await writeFile(join(locales, 'de.json'), '{}\n')
@@ -122,11 +126,11 @@ describe('the lockfile itself', () => {
   it('writes sorted JSON that reads back unchanged, leaving no temp files', async () => {
     const dir = await tempDir()
     const memory: TranslationMemory = {
-      version: 1,
+      version: 2,
       sourceLocale: 'en',
       entries: {
-        zeta: { 'b.key': { fr: sourceHash('B'), de: sourceHash('B') } },
-        alpha: { 'z.key': { de: sourceHash('Z') }, 'a.key': { de: sourceHash('A') } },
+        zeta: { 'b.key': { [sourceHash('B')]: ['fr', 'de'] } },
+        alpha: { 'z.key': { [sourceHash('Z')]: ['de'] }, 'a.key': { [sourceHash('A')]: ['de'] } },
       },
     }
 
@@ -137,10 +141,29 @@ describe('the lockfile itself', () => {
     const parsed = JSON.parse(raw) as TranslationMemory
     expect(Object.keys(parsed.entries)).toEqual(['alpha', 'zeta'])
     expect(Object.keys(parsed.entries.alpha!)).toEqual(['a.key', 'z.key'])
-    expect(Object.keys(parsed.entries.zeta!['b.key']!)).toEqual(['de', 'fr'])
-    expect(await readMemory(dir)).toEqual(memory)
+    expect(parsed.entries.zeta!['b.key']).toEqual({ [sourceHash('B')]: ['de', 'fr'] })
+    // Sorting is the only thing writing changes; the memory itself survives it.
+    expect(await readMemory(dir)).toEqual({
+      ...memory,
+      entries: { ...memory.entries, zeta: { 'b.key': { [sourceHash('B')]: ['de', 'fr'] } } },
+    })
 
     expect((await readdir(dir)).filter(entry => entry.endsWith('.tmp'))).toEqual([])
+  })
+
+  it('stores one hash per source version, not one per locale', async () => {
+    const dir = await tempDir()
+    const memory = emptyMemory('en')
+    for (const locale of ['de', 'fr', 'it']) recordTranslation(memory, 'root', 'actions.save', locale, 'Save')
+    // `it` alone was retranslated after the source changed.
+    recordTranslation(memory, 'root', 'actions.save', 'it', 'Store')
+
+    await writeMemory(dir, memory)
+
+    expect((await readMemory(dir)).entries.root!['actions.save']).toEqual({
+      [sourceHash('Save')]: ['de', 'fr'],
+      [sourceHash('Store')]: ['it'],
+    })
   })
 
   it('reads an absent or unreadable file as an empty memory', async () => {
@@ -152,6 +175,36 @@ describe('the lockfile itself', () => {
 
     await writeFile(lockPath(dir), JSON.stringify({ version: 99, sourceLocale: 'en', entries: {} }))
     expect(await readMemory(dir)).toEqual(emptyMemory())
+  })
+
+  // A version 1 file recorded a hash per target locale. Reading it as empty
+  // would call every recorded translation unknown and re-spend tokens on it.
+  it('migrates a version 1 file instead of discarding what it recorded', async () => {
+    const dir = await tempDir()
+    await writeFile(lockPath(dir), JSON.stringify({
+      version: 1,
+      sourceLocale: 'en',
+      entries: {
+        root: {
+          'actions.save': { de: sourceHash('Save'), fr: sourceHash('Save') },
+          greeting: { de: sourceHash('Hello'), fr: sourceHash('Hi') },
+        },
+      },
+    }))
+
+    const memory = await readMemory(dir)
+
+    expect(memory.version).toBe(2)
+    expect(memory.entries.root!['actions.save']).toEqual({ [sourceHash('Save')]: ['de', 'fr'] })
+    expect(memory.entries.root!.greeting).toEqual({
+      [sourceHash('Hello')]: ['de'],
+      [sourceHash('Hi')]: ['fr'],
+    })
+    expect(isStale(memory, 'root', 'actions.save', 'de', 'Save')).toBe(false)
+    expect(isStale(memory, 'root', 'greeting', 'fr', 'Hello')).toBe(true)
+
+    await writeMemory(dir, memory)
+    expect((JSON.parse(await readFile(lockPath(dir), 'utf-8')) as TranslationMemory).version).toBe(2)
   })
 
   it('calls a key stale only when a recorded hash disagrees with the source', () => {
@@ -166,6 +219,24 @@ describe('the lockfile itself', () => {
     expect(isStale(memory, 'root', 'actions.save', 'de', 'Store')).toBe(true)
     expect(isStale(memory, 'root', 'actions.save', 'fr', 'Store')).toBe(false)
   })
+
+  // A locale left under its old hash would read as stale forever, however
+  // often it is retranslated.
+  it('moves a locale to the new hash and drops the bucket it emptied', () => {
+    const memory = emptyMemory('en')
+    recordTranslation(memory, 'root', 'actions.save', 'de', 'Save')
+    recordTranslation(memory, 'root', 'actions.save', 'fr', 'Save')
+
+    expect(recordTranslation(memory, 'root', 'actions.save', 'de', 'Store')).toBe(true)
+    expect(memory.entries.root!['actions.save']).toEqual({
+      [sourceHash('Save')]: ['fr'],
+      [sourceHash('Store')]: ['de'],
+    })
+
+    recordTranslation(memory, 'root', 'actions.save', 'fr', 'Store')
+    expect(memory.entries.root!['actions.save']).toEqual({ [sourceHash('Store')]: ['de', 'fr'] })
+    expect(isStale(memory, 'root', 'actions.save', 'fr', 'Store')).toBe(false)
+  })
 })
 
 describe('translateMissing with a translation memory', () => {
@@ -176,17 +247,11 @@ describe('translateMissing with a translation memory', () => {
 
     expect(result.summary.totalTranslated).toBe(6) // 3 keys × de + fr
     const lock = await readLock(dir)
-    expect(lock.version).toBe(1)
+    expect(lock.version).toBe(2)
     expect(lock.sourceLocale).toBe('en')
     expect(Object.keys(lock.entries.root!)).toEqual(['actions.cancel', 'actions.save', 'greeting'])
-    expect(lock.entries.root!['actions.save']).toEqual({
-      de: sourceHash('Save'),
-      fr: sourceHash('Save'),
-    })
-    expect(lock.entries.root!.greeting).toEqual({
-      de: sourceHash('Hello {name}'),
-      fr: sourceHash('Hello {name}'),
-    })
+    expect(lock.entries.root!['actions.save']).toEqual({ [sourceHash('Save')]: ['de', 'fr'] })
+    expect(lock.entries.root!.greeting).toEqual({ [sourceHash('Hello {name}')]: ['de', 'fr'] })
   })
 
   it('reports a key whose source changed as stale, without touching its value', async () => {
@@ -224,8 +289,10 @@ describe('translateMissing with a translation memory', () => {
     expect((de.actions as Record<string, string>).save).toBe('[t] Save')
 
     // The rewritten value is recorded against the new source, so a follow-up
-    // run has nothing left to report.
-    expect((await readLock(dir)).entries.root!.greeting!.de).toBe(sourceHash('Hi {name}'))
+    // run has nothing left to report, and the hash it replaced is gone.
+    expect((await readLock(dir)).entries.root!.greeting).toEqual({
+      [sourceHash('Hi {name}')]: ['de', 'fr'],
+    })
     expect((await translateAll(dir)).summary.staleCount).toBeUndefined()
   })
 
@@ -258,9 +325,28 @@ describe('translateMissing with a translation memory', () => {
 
     expect(result.summary.totalTranslated).toBe(6)
     expect((await readLock(dir)).entries.root!['actions.save']).toEqual({
-      de: sourceHash('Save'),
-      fr: sourceHash('Save'),
+      [sourceHash('Save')]: ['de', 'fr'],
     })
+  })
+
+  // A file written before the shape changed still holds usable answers.
+  it('reads a version 1 lockfile and rewrites it in the current shape', async () => {
+    const dir = await createProject()
+    await translateAll(dir)
+    const v2 = await readLock(dir)
+    await writeFile(lockPath(dir), JSON.stringify({
+      version: 1,
+      sourceLocale: 'en',
+      entries: { root: { greeting: { de: sourceHash('Hello {name}'), fr: sourceHash('Hello {name}') } } },
+    }))
+
+    await editSource(dir, data => { data.greeting = 'Hi {name}' })
+    const result = await translateAll(dir)
+
+    expect(result.results!.de!.stale).toEqual(['greeting'])
+    const lock = await readLock(dir)
+    expect(lock.version).toBe(2)
+    expect(lock.entries.root!.greeting).toEqual(v2.entries.root!.greeting)
   })
 })
 
@@ -300,7 +386,7 @@ describe('overwriteStale through the operation descriptor', () => {
   })
 
   it('changes nothing in a project without a translation memory', async () => {
-    const dir = await createProject()
+    const dir = await createProject({ translationMemory: false })
     await translateAll(dir)
     await editSource(dir, (data) => { data.greeting = 'Hi {name}' })
 
@@ -313,10 +399,38 @@ describe('overwriteStale through the operation descriptor', () => {
   })
 })
 
-describe('without translationMemory in the config', () => {
-  it('writes no lockfile and returns what it always has', async () => {
+describe('the translationMemory setting', () => {
+  // The lockfile is what makes a stale translation visible at all, so a project
+  // gets one without asking — the first run creates it.
+  it('records a run in a project that never mentioned it', async () => {
+    const dir = await createProject()
+
+    await translateAll(dir)
+
+    const lock = await readLock(dir)
+    expect(lock.version).toBe(2)
+    expect(lock.entries.root!['actions.save']).toEqual({ [sourceHash('Save')]: ['de', 'fr'] })
+  })
+
+  it('leaves an existing lockfile untouched when set to false', async () => {
+    const dir = await createProject({ translationMemory: false })
+    const before = JSON.stringify({
+      version: 2,
+      sourceLocale: 'en',
+      entries: { root: { greeting: { [sourceHash('Hello {name}')]: ['de'] } } },
+    })
+    await writeFile(lockPath(dir), before)
+
+    await editSource(dir, data => { data.greeting = 'Hi {name}' })
+    const result = await translateAll(dir)
+
+    expect(result.summary.staleCount).toBeUndefined()
+    expect(await readFile(lockPath(dir), 'utf-8')).toBe(before)
+  })
+
+  it('writes no lockfile and returns what it always has when set to false', async () => {
     const on = await createProject({ translationMemory: true })
-    const off = await createProject()
+    const off = await createProject({ translationMemory: false })
 
     expect(await translateAll(off)).toEqual(await translateAll(on))
 
@@ -371,7 +485,7 @@ describe('translateKey with a translation memory', () => {
     })
 
     expect(result.translated).toEqual(['de'])
-    expect((await readLock(dir)).entries.root!['actions.save']).toEqual({ de: sourceHash('Store') })
+    expect((await readLock(dir)).entries.root!['actions.save']).toEqual({ [sourceHash('Store')]: ['de'] })
 
     const skipped = await translateKey(skipRequest(dir))
     expect(skipped.skipped).toEqual([{ locale: 'de', reason: 'already-translated', stale: false }])
@@ -388,7 +502,7 @@ describe('write_translations and the translation memory', () => {
       translations: { 'actions.save': { de: 'Speichern' } },
     })
 
-    expect((await readLock(dir)).entries.root!['actions.save']).toEqual({ de: sourceHash('Save') })
+    expect((await readLock(dir)).entries.root!['actions.save']).toEqual({ [sourceHash('Save')]: ['de'] })
     expect((await translateAll(dir)).summary.staleCount).toBeUndefined()
   })
 

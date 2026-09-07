@@ -2,6 +2,8 @@
  * status: translation coverage per locale and per layer, in one call.
  */
 
+import { existsSync } from 'node:fs'
+
 import { detectI18nConfig } from '../config/detector.js'
 import { buildLayerGraph } from '../config/layer-graph.js'
 import { readLocaleData, readLocaleDataIfPresent } from '../io/locale-data.js'
@@ -9,6 +11,8 @@ import { getNestedValue, getLeafKeys } from '../io/key-operations.js'
 import { findReferenceLocaleOrThrow, localeRefInfo, resolveLayersToScan } from './shared.js'
 import { resolveProtectedLocales } from './ops-translate.js'
 import { collectEmptyTranslations } from './ops-read.js'
+import { memoryFilePath, openTranslationMemory } from './translate/memory.js'
+import type { TranslationMemorySession } from './translate/memory.js'
 import type { LocaleDefinition, LocaleDir, I18nConfig } from '../config/types.js'
 import type { TranslationStatusResult, LocaleStatus, LayerStatus } from './types.js'
 
@@ -45,16 +49,26 @@ function percent(translated: number, total: number): number {
   return Math.round((translated / total) * 1000) / 10
 }
 
-interface Counts { total: number, translated: number, missing: number, empty: number }
+interface Counts { total: number, translated: number, missing: number, empty: number, stale: number }
 
-const emptyCounts = (): Counts => ({ total: 0, translated: 0, missing: 0, empty: 0 })
+const emptyCounts = (): Counts => ({ total: 0, translated: 0, missing: 0, empty: 0, stale: 0 })
 
-/** Counts for one locale against one layer's reference keys. */
-function countLocale(data: Record<string, unknown>, keys: string[]): Counts {
+/**
+ * Counts for one locale against one layer's reference keys. `isStaleKey`
+ * answers for keys that have a value: a missing or blank one is untranslated,
+ * which the other counters already say, and it cannot be out of date.
+ */
+function countLocale(
+  data: Record<string, unknown>,
+  keys: string[],
+  isStaleKey: (key: string) => boolean,
+): Counts {
   const counts = emptyCounts()
   for (const key of keys) {
     counts.total += 1
-    counts[classify(data, key)] += 1
+    const state = classify(data, key)
+    counts[state] += 1
+    if (state === 'translated' && isStaleKey(key)) counts.stale += 1
   }
   return counts
 }
@@ -65,6 +79,7 @@ function merge(into: Counts | undefined, from: Counts): void {
   into.translated += from.translated
   into.missing += from.missing
   into.empty += from.empty
+  into.stale += from.stale
 }
 
 /**
@@ -74,6 +89,9 @@ function merge(into: Counts | undefined, from: Counts): void {
  * percentage — they are maintained by hand, so counting their gaps as project
  * debt makes a healthy project read as failing and moves a number nobody can
  * act on.
+ *
+ * Where a translation memory exists, translated keys whose source text has
+ * changed since are counted too: coverage alone reads them as done.
  */
 export async function getTranslationStatus(opts: {
   layer?: string
@@ -98,15 +116,25 @@ export async function getTranslationStatus(opts: {
   const byLocale = new Map<string, Counts>(targets.map(l => [l.code, emptyCounts()]))
   const byLayer = new Map<string, Counts>(layersToScan.map(d => [d.layer, emptyCounts()]))
 
-  await tally({ config, layersToScan, refLocale, targets, protectedCodes, byLocale, byLayer })
+  // Only a memory already on disk can answer for staleness: an empty one calls
+  // every key current, which a caller cannot tell from a real all-clear. The
+  // session decides the rest — it is null when the feature is off, and when the
+  // reference locale is not the one the recorded hashes are of. Dry run because
+  // reporting coverage must not rewrite the project's bookkeeping.
+  const memory = existsSync(memoryFilePath(dir))
+    ? await openTranslationMemory({ config, projectDir: dir, sourceLocale: refLocale.code, dryRun: true })
+    : null
+
+  await tally({ config, layersToScan, refLocale, targets, protectedCodes, byLocale, byLayer, memory })
 
   const locales: LocaleStatus[] = targets.map((locale) => {
-    const c = byLocale.get(locale.code) ?? emptyCounts()
+    const { stale, ...c } = byLocale.get(locale.code) ?? emptyCounts()
     const isProtected = protectedCodes.has(locale.code)
     return {
       ...localeRefInfo(locale),
       ...c,
       completion: percent(c.translated, c.total),
+      ...(memory ? { stale } : {}),
       ...(isProtected ? { protected: true, excludedFromOverall: true } : {}),
     }
   })
@@ -115,10 +143,11 @@ export async function getTranslationStatus(opts: {
   // app consumes holds keys nothing can render, which no other tool reports.
   const graph = buildLayerGraph(config)
 
-  const layers: LayerStatus[] = [...byLayer.entries()].map(([layer, c]) => ({
+  const layers: LayerStatus[] = [...byLayer.entries()].map(([layer, { stale, ...c }]) => ({
     layer,
     ...c,
     completion: percent(c.translated, c.total),
+    ...(memory ? { stale } : {}),
     consumedBy: graph.appsUsingLayer(layer),
   }))
 
@@ -147,6 +176,7 @@ export async function getTranslationStatus(opts: {
       translatedKeys: overallTranslated,
       missingKeys: counted.reduce((n, l) => n + l.missing, 0),
       emptyKeys: counted.reduce((n, l) => n + l.empty, 0),
+      ...(memory ? { staleCount: counted.reduce((n, l) => n + (l.stale ?? 0), 0) } : {}),
       // The gate in #248 reads this counter, so the name is load-bearing.
       completionPercent: percent(overallTranslated, overallTotal),
     },
@@ -218,6 +248,8 @@ async function tally(ctx: {
   protectedCodes: Set<string>
   byLocale: Map<string, Counts>
   byLayer: Map<string, Counts>
+  /** Null when nothing can be said about staleness; see getTranslationStatus. */
+  memory: TranslationMemorySession | null
 }): Promise<void> {
   for (const localeDir of ctx.layersToScan) {
     const refData = await readLocaleDataIfPresent(ctx.config, localeDir.layer, ctx.refLocale)
@@ -227,7 +259,12 @@ async function tally(ctx: {
     if (keys.length === 0) continue
 
     for (const target of ctx.targets) {
-      const counts = countLocale(await readTargetData(ctx.config, localeDir.layer, target), keys)
+      const isStaleKey = (key: string): boolean => {
+        if (!ctx.memory) return false
+        const source = getNestedValue(refData, key)
+        return typeof source === 'string' && ctx.memory.isStale(localeDir.layer, key, target.code, source)
+      }
+      const counts = countLocale(await readTargetData(ctx.config, localeDir.layer, target), keys, isStaleKey)
       merge(ctx.byLocale.get(target.code), counts)
       // A protected locale's gaps are deliberate, so they must not drag the
       // layer figure down either — the layer is not what is incomplete.

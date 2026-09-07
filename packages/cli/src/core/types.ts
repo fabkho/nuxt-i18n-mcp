@@ -199,6 +199,12 @@ export interface LocaleStatus extends LocaleRefInfo {
   /** Present but empty-string — scaffolded and never filled. */
   empty: number
   completion: number
+  /**
+   * Translated keys whose source text has changed since. Absent, rather than
+   * zero, without a translation memory to compare against — nothing is known
+   * about staleness there, which is not the same as nothing being stale.
+   */
+  stale?: number
   /** Listed in protectedLocales: maintained by hand. */
   protected?: true
   /** Protected locales are reported but kept out of the overall figure. */
@@ -212,6 +218,8 @@ export interface LayerStatus {
   missing: number
   empty: number
   completion: number
+  /** As on LocaleStatus: absent without a translation memory. */
+  stale?: number
   /**
    * Apps whose declared layers include this one. Empty means either no app
    * information exists (hand-built configs) or nothing consumes the layer.
@@ -234,6 +242,11 @@ export interface TranslationStatusSummary {
   translatedKeys: number
   missingKeys: number
   emptyKeys: number
+  /**
+   * Translated keys across the counted locales whose source text has changed
+   * since. Absent without a translation memory, matching translate's summary.
+   */
+  staleCount?: number
   /** Overall completion, protected locales excluded. Read by --fail-under. */
   completionPercent: number
 }
@@ -317,7 +330,11 @@ export interface SearchTranslationsResult {
    * passed `includeLocales`.
    */
   matches: SearchKeyMatch[] | SearchMatch[]
-  /** How many rows `matches` holds, whichever shape it is in. */
+  /**
+   * How many rows matched, whichever shape they are in. Counted before any
+   * limit applies, so it stays the size of the finding rather than the size of
+   * the window returned.
+   */
   totalMatches: number
 }
 
@@ -473,6 +490,7 @@ export interface TranslateMissingLocaleResult {
    * `overwriteStale`, which counts them into `missing` instead.
    */
   stale?: string[]
+  /** Provider requests issued for this locale, splits and re-asks of a cut-off batch included. */
   batches?: number
   model?: string
   writeError?: string
@@ -489,6 +507,7 @@ export interface TranslateMissingCompactEntry {
   skipped: number
   wouldTranslate?: number
   stale?: number
+  /** Provider requests issued for this locale, splits and re-asks of a cut-off batch included. */
   batches?: number
   model?: string
   writeError?: string

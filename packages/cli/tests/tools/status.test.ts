@@ -19,6 +19,7 @@ vi.mock('../../src/config/detector.js', async () => {
         protectedLocales?: string[]
         layers?: string[]
         apps?: Array<{ name: string; layers: string[] }>
+        translationMemory?: boolean
       }
       const layers = cfg.layers ?? ['root']
       return {
@@ -32,7 +33,10 @@ vi.mock('../../src/config/detector.js', async () => {
           layerRootDir: projectDir,
         })),
         layerRootDirs: [projectDir],
-        projectConfig: { protectedLocales: cfg.protectedLocales ?? [] },
+        projectConfig: {
+          protectedLocales: cfg.protectedLocales ?? [],
+          ...(cfg.translationMemory === undefined ? {} : { translationMemory: cfg.translationMemory }),
+        },
         apps: (cfg.apps ?? [{ name: 'root', layers }])
           .map(app => ({ name: app.name, rootDir: resolve(projectDir, app.name), layers: app.layers })),
       }
@@ -44,6 +48,7 @@ vi.mock('../../src/config/detector.js', async () => {
 
 const { getTranslationStatus } = await import('../../src/core/operations.js')
 const { runOperation } = await import('../fixtures/surface.js')
+const { MEMORY_FILE, sourceHash } = await import('../../src/core/translate/memory.js')
 
 beforeEach(async () => {
   dir = await mkdtemp(join(tmpdir(), 'i18n-status-'))
@@ -59,6 +64,7 @@ async function project(opts: {
   layers?: Record<string, Record<string, unknown>>
   /** Consumption edges. Omitted, one app consumes every layer — the default shape. */
   apps?: Array<{ name: string; layers: string[] }>
+  translationMemory?: boolean
 }) {
   const layers = opts.layers ?? {}
   await writeFile(join(dir, '.i18n-mcp.json'), JSON.stringify({
@@ -66,6 +72,7 @@ async function project(opts: {
     protectedLocales: opts.protectedLocales,
     layers: Object.keys(layers),
     apps: opts.apps,
+    translationMemory: opts.translationMemory,
   }))
   for (const [layer, files] of Object.entries(layers)) {
     await mkdir(join(dir, layer), { recursive: true })
@@ -191,6 +198,93 @@ describe('per-layer breakdown', () => {
 
     expect(result.summary.layersScanned).toEqual(['app-admin'])
     expect(result.summary.completionPercent).toBe(0)
+  })
+})
+
+/**
+ * Coverage counts a key with a value as done, however old that value is. The
+ * translation memory is the only thing that knows better, so status reports it
+ * where one exists — and says nothing at all where none does, since "no stale
+ * keys" and "no way to tell" are different answers.
+ */
+describe('stale keys', () => {
+  const writeLock = async (entries: Record<string, Record<string, Record<string, string[]>>>) =>
+    await writeFile(join(dir, MEMORY_FILE), JSON.stringify({ version: 2, sourceLocale: 'en', entries }))
+
+  const translated = (opts: { translationMemory?: boolean } = {}) => project({
+    locales: ['en', 'de', 'fr'],
+    layers: {
+      root: {
+        en: { a: 'A', b: 'B' },
+        de: { a: 'A de', b: 'B de' },
+        fr: { a: 'A fr', b: 'B fr' },
+      },
+    },
+    ...opts,
+  })
+
+  it('counts translations whose source text has changed since', async () => {
+    await translated()
+    await writeLock({
+      root: {
+        a: { [sourceHash('A')]: ['de', 'fr'] },
+        b: { [sourceHash('B (old)')]: ['de'] },
+      },
+    })
+
+    const result = await getTranslationStatus({ projectDir: dir })
+
+    expect(byCode(result, 'de')).toMatchObject({ translated: 2, completion: 100, stale: 1 })
+    expect(byCode(result, 'fr')).toMatchObject({ translated: 2, stale: 0 })
+    expect(result.layers?.[0]).toMatchObject({ layer: 'root', stale: 1 })
+    expect(result.summary.staleCount).toBe(1)
+  })
+
+  // Nothing recorded is not evidence of staleness, and a key the locale never
+  // translated is already counted as missing.
+  it('ignores keys with no record and keys the locale has not translated', async () => {
+    await project({
+      locales: ['en', 'de'],
+      layers: { root: { en: { a: 'A', b: 'B' }, de: { a: 'A de' } } },
+    })
+    await writeLock({ root: { b: { [sourceHash('B (old)')]: ['de'] } } })
+
+    const result = await getTranslationStatus({ projectDir: dir })
+
+    expect(byCode(result, 'de')).toMatchObject({ missing: 1, stale: 0 })
+    expect(result.summary.staleCount).toBe(0)
+  })
+
+  it('omits the counts entirely when the project has no lockfile', async () => {
+    await translated()
+
+    const result = await getTranslationStatus({ projectDir: dir })
+
+    expect(byCode(result, 'de')).not.toHaveProperty('stale')
+    expect(result.layers?.[0]).not.toHaveProperty('stale')
+    expect(result.summary).not.toHaveProperty('staleCount')
+  })
+
+  it('omits them for a project that switched the memory off, lockfile or not', async () => {
+    await translated({ translationMemory: false })
+    await writeLock({ root: { a: { [sourceHash('A (old)')]: ['de'] } } })
+
+    const result = await getTranslationStatus({ projectDir: dir })
+
+    expect(byCode(result, 'de')).not.toHaveProperty('stale')
+    expect(result.summary).not.toHaveProperty('staleCount')
+  })
+
+  // The hashes are of the default locale's text; against any other reference
+  // they answer a question nobody asked.
+  it('omits them when asked to report against another reference locale', async () => {
+    await translated()
+    await writeLock({ root: { a: { [sourceHash('A (old)')]: ['de'] } } })
+
+    const result = await getTranslationStatus({ projectDir: dir, referenceLocale: 'fr' })
+
+    expect(byCode(result, 'de')).not.toHaveProperty('stale')
+    expect(result.summary).not.toHaveProperty('staleCount')
   })
 })
 

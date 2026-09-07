@@ -11,16 +11,23 @@
  *
  * ```json
  * {
- *   "version": 1,
+ *   "version": 2,
  *   "sourceLocale": "en",
  *   "entries": {
- *     "<layer>": { "<key>": { "de": "<hash>", "fr": "<hash>" } }
+ *     "<layer>": { "<key>": { "<hash>": ["de", "fr"], "<hash2>": ["it"] } }
  *   }
  * }
  * ```
  *
- * The hash under a target locale is of the *source* value at the moment that
- * locale was written, not of the translation. That is the whole question this
+ * Target locales are grouped under the hash they were written against instead
+ * of each carrying a copy of it: the hash describes the source text, so a
+ * 30-locale project would otherwise repeat one string 30 times per key in a
+ * file that is committed and merged. Several buckets under one key are normal
+ * and meant — locales translated at different times were written from
+ * different source versions, and telling them apart is the point of the file.
+ *
+ * A hash is of the *source* value at the moment the locales listed under it
+ * were written, not of any translation. That is the whole question this
  * file answers: for (layer, key, targetLocale), was the target written against
  * the current source? Nothing else is stored — in particular no copy of the
  * current source hash, which would be a second source of truth that silently
@@ -42,8 +49,9 @@
  * other reference locale bypass the memory entirely.
  *
  * The file is written sorted and atomically, so its git diff shows exactly the
- * keys a run touched. It is opt-in: nothing is read or written unless
- * `translationMemory` is enabled in the project config.
+ * keys a run touched. It is on unless the project sets `translationMemory` to
+ * false, so the first translate run in a project creates it; turning it off
+ * stops all reading and writing and leaves any existing file alone.
  */
 
 import { createHash } from 'node:crypto'
@@ -61,11 +69,17 @@ import { findLocaleImpl } from '../shared.js'
 /** Lockfile name, at the project root. */
 export const MEMORY_FILE = '.i18n-kit.lock.json'
 
-/** Bumped only when the shape changes; older/newer files are ignored. */
-export const MEMORY_VERSION = 1
+/**
+ * Bumped only when the shape changes. Version 1 (a hash per target locale) is
+ * migrated on read; anything else is ignored.
+ */
+export const MEMORY_VERSION = 2
 
-/** layer → key → target locale code → hash of the source value it was written from. */
-export type MemoryEntries = Record<string, Record<string, Record<string, string>>>
+/** Hash of a source value → the target locales written from it. */
+export type LocalesByHash = Record<string, string[]>
+
+/** layer → key → the source hashes that key's targets were written from. */
+export type MemoryEntries = Record<string, Record<string, LocalesByHash>>
 
 export interface TranslationMemory {
   version: number
@@ -95,40 +109,64 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
 }
 
-/** Accept only what this version wrote; anything else is treated as no memory. */
-function parseMemory(raw: string): TranslationMemory | null {
+function parseBuckets(raw: Record<string, unknown>): LocalesByHash {
+  const buckets: LocalesByHash = {}
+  for (const [hash, locales] of Object.entries(raw)) {
+    if (!Array.isArray(locales)) continue
+    buckets[hash] = locales.filter((l): l is string => typeof l === 'string')
+  }
+  return buckets
+}
+
+/** Version 1 stored one hash per target locale; group them into the buckets. */
+function parseV1Buckets(raw: Record<string, unknown>): LocalesByHash {
+  const buckets: LocalesByHash = {}
+  for (const [locale, hash] of Object.entries(raw)) {
+    if (typeof hash === 'string') (buckets[hash] ??= []).push(locale)
+  }
+  return buckets
+}
+
+/**
+ * Accept what this version wrote and migrate what version 1 did; anything else
+ * is treated as no memory. A migrated file keeps every recorded hash, so the
+ * bump costs no re-translation.
+ */
+function parseMemory(raw: string): { memory: TranslationMemory, migrated: boolean } | null {
   let parsed: unknown
   try {
     parsed = JSON.parse(raw)
   } catch {
     return null
   }
-  if (!isRecord(parsed) || parsed.version !== MEMORY_VERSION) return null
+  if (!isRecord(parsed)) return null
+  const legacy = parsed.version === 1
+  if (!legacy && parsed.version !== MEMORY_VERSION) return null
   if (typeof parsed.sourceLocale !== 'string' || !isRecord(parsed.entries)) return null
 
   const entries: MemoryEntries = {}
   for (const [layer, keys] of Object.entries(parsed.entries)) {
     if (!isRecord(keys)) continue
-    const layerEntries: Record<string, Record<string, string>> = {}
-    for (const [key, locales] of Object.entries(keys)) {
-      if (!isRecord(locales)) continue
-      const localeHashes: Record<string, string> = {}
-      for (const [locale, hash] of Object.entries(locales)) {
-        if (typeof hash === 'string') localeHashes[locale] = hash
-      }
-      layerEntries[key] = localeHashes
+    const layerEntries: Record<string, LocalesByHash> = {}
+    for (const [key, buckets] of Object.entries(keys)) {
+      if (!isRecord(buckets)) continue
+      layerEntries[key] = legacy ? parseV1Buckets(buckets) : parseBuckets(buckets)
     }
     entries[layer] = layerEntries
   }
-  return { version: MEMORY_VERSION, sourceLocale: parsed.sourceLocale, entries }
+  return {
+    memory: { version: MEMORY_VERSION, sourceLocale: parsed.sourceLocale, entries },
+    migrated: legacy,
+  }
 }
 
 /**
  * Read the lockfile, plus whether the file on disk has to be replaced: an
  * unreadable one is reported as empty so the run continues, and rewritten at
- * the end rather than left to fail every future run the same way.
+ * the end rather than left to fail every future run the same way. A migrated
+ * older file is equally due a rewrite, so the next run reads it natively.
  */
-async function loadMemory(dir: string): Promise<{ memory: TranslationMemory, unreadable: boolean }> {
+async function loadMemory(dir: string): Promise<{ memory: TranslationMemory, mustRewrite: boolean }> {
   let raw: string
   try {
     raw = await readFile(memoryFilePath(dir), 'utf-8')
@@ -138,21 +176,21 @@ async function loadMemory(dir: string): Promise<{ memory: TranslationMemory, unr
     if (!missing) {
       log.warn(`Could not read ${MEMORY_FILE}: ${toErrorMessage(error)} — continuing with an empty translation memory.`)
     }
-    return { memory: emptyMemory(), unreadable: !missing }
+    return { memory: emptyMemory(), mustRewrite: !missing }
   }
 
   const parsed = parseMemory(raw)
   if (!parsed) {
     log.warn(`${MEMORY_FILE} is not a version ${MEMORY_VERSION} translation memory — continuing as if empty and rewriting it.`)
-    return { memory: emptyMemory(), unreadable: true }
+    return { memory: emptyMemory(), mustRewrite: true }
   }
-  return { memory: parsed, unreadable: false }
+  return { memory: parsed.memory, mustRewrite: parsed.migrated }
 }
 
 /**
- * Read the lockfile. Never throws: an unreadable or foreign file yields an
- * empty memory (and a warning), because a translate run must not fail over its
- * own bookkeeping.
+ * Read the lockfile, in this version's shape whatever version wrote it. Never
+ * throws: an unreadable or foreign file yields an empty memory (and a
+ * warning), because a translate run must not fail over its own bookkeeping.
  */
 export async function readMemory(dir: string): Promise<TranslationMemory> {
   return (await loadMemory(dir)).memory
@@ -163,14 +201,14 @@ function sortMemory(memory: TranslationMemory): TranslationMemory {
   const entries: MemoryEntries = {}
   for (const layer of Object.keys(memory.entries).sort()) {
     const keys = memory.entries[layer] ?? {}
-    const layerEntries: Record<string, Record<string, string>> = {}
+    const layerEntries: Record<string, LocalesByHash> = {}
     for (const key of Object.keys(keys).sort()) {
-      const locales = keys[key] ?? {}
-      const localeHashes: Record<string, string> = {}
-      for (const locale of Object.keys(locales).sort()) {
-        localeHashes[locale] = locales[locale]!
+      const buckets = keys[key] ?? {}
+      const sorted: LocalesByHash = {}
+      for (const hash of Object.keys(buckets).sort()) {
+        sorted[hash] = [...(buckets[hash] ?? [])].sort()
       }
-      layerEntries[key] = localeHashes
+      layerEntries[key] = sorted
     }
     entries[layer] = layerEntries
   }
@@ -179,6 +217,14 @@ function sortMemory(memory: TranslationMemory): TranslationMemory {
 
 export async function writeMemory(dir: string, memory: TranslationMemory): Promise<void> {
   await atomicWrite(memoryFilePath(dir), JSON.stringify(sortMemory(memory), null, 2) + '\n')
+}
+
+/** The source hash `locale` was written from, or undefined if nothing recorded it. */
+function recordedHash(buckets: LocalesByHash, locale: string): string | undefined {
+  for (const [hash, locales] of Object.entries(buckets)) {
+    if (locales.includes(locale)) return hash
+  }
+  return undefined
 }
 
 /**
@@ -192,7 +238,9 @@ export function isStale(
   locale: string,
   currentSourceValue: string,
 ): boolean {
-  const recorded = memory.entries[layer]?.[key]?.[locale]
+  const buckets = memory.entries[layer]?.[key]
+  if (!buckets) return false
+  const recorded = recordedHash(buckets, locale)
   if (recorded === undefined) return false
   return recorded !== sourceHash(currentSourceValue)
 }
@@ -211,15 +259,27 @@ export function recordTranslation(
 ): boolean {
   const hash = sourceHash(sourceValue)
   const layerEntries = (memory.entries[layer] ??= {})
-  const localeHashes = (layerEntries[key] ??= {})
-  if (localeHashes[locale] === hash) return false
-  localeHashes[locale] = hash
+  const buckets = (layerEntries[key] ??= {})
+  const previous = recordedHash(buckets, locale)
+  if (previous === hash) return false
+  if (previous !== undefined) {
+    // A locale sits under exactly one hash: the one its value was last written
+    // from. Leaving it under the old one too would report it stale forever.
+    const rest = (buckets[previous] ?? []).filter(l => l !== locale)
+    if (rest.length === 0) delete buckets[previous]
+    else buckets[previous] = rest
+  }
+  const bucket = (buckets[hash] ??= [])
+  bucket.push(locale)
   return true
 }
 
-/** True when the project asked for a lockfile. */
+/**
+ * On unless the project turned it off, so a project gets the lockfile without
+ * asking. `false` also stops reading an existing file, which stays untouched.
+ */
 export function isTranslationMemoryEnabled(config: I18nConfig): boolean {
-  return config.projectConfig?.translationMemory === true
+  return config.projectConfig?.translationMemory !== false
 }
 
 /** The project's default locale, as a canonical code. */
@@ -273,7 +333,7 @@ export async function openTranslationMemory(opts: {
     : { ...loaded.memory, sourceLocale: defaultCode }
   // Both cases leave the file on disk wrong, so it is rewritten at the end of
   // the run even if nothing new is recorded.
-  let dirty = localeChanged || loaded.unreadable
+  let dirty = localeChanged || loaded.mustRewrite
 
   return {
     memory,

@@ -118,7 +118,8 @@ export interface ProjectConfig {
    * per layer, key and target locale, a hash of the source text the translation
    * was made from. That is what lets a later run tell a current translation from
    * one whose source has changed since — state alone cannot, because a target
-   * value exists either way. Off by default; no file is created until enabled.
+   * value exists either way. On by default: the first translate run writes the
+   * file. False disables it and leaves any existing file untouched.
    */
   translationMemory?: boolean
   /**
