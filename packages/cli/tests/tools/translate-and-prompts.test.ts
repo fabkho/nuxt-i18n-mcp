@@ -1,4 +1,4 @@
-import { describe, it, expect, afterEach, beforeEach } from 'vitest'
+import { describe, it, expect, afterEach, beforeEach, vi } from 'vitest'
 import { resolve, join } from 'node:path'
 import { cp, rm, mkdir } from 'node:fs/promises'
 import { readLocaleFile } from '../../src/io/json-reader.js'
@@ -11,6 +11,9 @@ import {
 import { loadProjectConfig } from '../../src/config/project-config.js'
 import { playgroundDir } from '../fixtures/mock-detector.js'
 import { computeProgressTotal, buildTranslationSystemPrompt, buildTranslationUserMessage, extractJsonFromResponse } from '../../src/core/operations.js'
+import { buildFallbackContext, warnUnmatchedLocaleNotes } from '../../src/core/translate/prompts.js'
+import { log } from '../../src/utils/logger.js'
+import type { I18nConfig, LocaleDefinition } from '../../src/config/types.js'
 
 // Temp copy of locale dirs for mutation tests
 const tmpDir = resolve(import.meta.dirname, '../../.tmp-translate')
@@ -207,25 +210,41 @@ describe('translate_missing: progressTotal computation', () => {
   })
 })
 
+/**
+ * The target locale reaches the prompt builder as its full definition, not as
+ * one of its names: `localeNotes` may be keyed by any of them, and the label
+ * shown to the model is a separate decision from the lookup.
+ */
+function locale(overrides: Partial<LocaleDefinition> & { code: string }): LocaleDefinition {
+  return { language: overrides.code, ...overrides }
+}
+
+const DE = locale({ code: 'de' })
+
 describe('buildTranslationSystemPrompt', () => {
   it('includes role framing with no project config', () => {
-    const result = buildTranslationSystemPrompt(undefined, 'de')
+    const result = buildTranslationSystemPrompt(undefined, DE)
     expect(result).toContain('You are a professional translator')
     expect(result).toContain('{placeholder}')
     expect(result).toContain('Return ONLY a JSON object')
   })
 
   it('includes role framing even with translationPrompt set', () => {
-    const result = buildTranslationSystemPrompt({ translationPrompt: 'Be formal.' }, 'de')
+    const result = buildTranslationSystemPrompt({ translationPrompt: 'Be formal.' }, DE)
     expect(result).toContain('You are a professional translator')
     expect(result).toContain('Be formal.')
     expect(result).toContain('Return ONLY a JSON object')
   })
 
+  it('includes the project context so the provider sees the same background as an agent', () => {
+    const result = buildTranslationSystemPrompt({ context: 'Booking software for salons.' }, DE)
+    expect(result).toContain('PROJECT CONTEXT: Booking software for salons.')
+  })
+
   it('includes glossary when provided', () => {
     const result = buildTranslationSystemPrompt({
       glossary: { Booking: 'Buchung', Resource: 'Ressource' },
-    }, 'de')
+    }, DE)
     expect(result).toContain('GLOSSARY')
     expect(result).toContain('Booking → Buchung')
     expect(result).toContain('Resource → Ressource')
@@ -234,7 +253,7 @@ describe('buildTranslationSystemPrompt', () => {
   it('includes locale note for the target locale', () => {
     const result = buildTranslationSystemPrompt({
       localeNotes: { de: 'Informal German', fr: 'Formal French' },
-    }, 'de')
+    }, DE)
     expect(result).toContain('TARGET LOCALE NOTE (de): Informal German')
     expect(result).not.toContain('Formal French')
   })
@@ -242,7 +261,7 @@ describe('buildTranslationSystemPrompt', () => {
   it('includes examples when provided', () => {
     const result = buildTranslationSystemPrompt({
       examples: [{ key: 'save', de: 'Speichern', note: 'imperative' }],
-    }, 'de')
+    }, DE)
     expect(result).toContain('STYLE EXAMPLES')
     expect(result).toContain('save')
     expect(result).toContain('Speichern')
@@ -251,18 +270,21 @@ describe('buildTranslationSystemPrompt', () => {
 
   it('includes all fields in correct order when all are set', () => {
     const result = buildTranslationSystemPrompt({
+      context: 'Booking software.',
       translationPrompt: 'Keep it short.',
       glossary: { Save: 'Speichern' },
       localeNotes: { de: 'Use du.' },
       examples: [{ key: 'ok', de: 'OK' }],
-    }, 'de')
+    }, DE)
     const roleIdx = result.indexOf('You are a professional translator')
+    const contextIdx = result.indexOf('PROJECT CONTEXT')
     const promptIdx = result.indexOf('Keep it short.')
     const glossaryIdx = result.indexOf('GLOSSARY')
     const noteIdx = result.indexOf('TARGET LOCALE NOTE')
     const examplesIdx = result.indexOf('STYLE EXAMPLES')
     const formatIdx = result.indexOf('Return ONLY a JSON object')
-    expect(roleIdx).toBeLessThan(promptIdx)
+    expect(roleIdx).toBeLessThan(contextIdx)
+    expect(contextIdx).toBeLessThan(promptIdx)
     expect(promptIdx).toBeLessThan(glossaryIdx)
     expect(glossaryIdx).toBeLessThan(noteIdx)
     expect(noteIdx).toBeLessThan(examplesIdx)
@@ -270,9 +292,127 @@ describe('buildTranslationSystemPrompt', () => {
   })
 
   it('uses :placeholder instruction for php-array format', () => {
-    const result = buildTranslationSystemPrompt(undefined, 'de', 'php-array')
+    const result = buildTranslationSystemPrompt(undefined, DE, 'php-array')
     expect(result).toContain(':placeholder')
     expect(result).not.toContain('{placeholder}')
+  })
+})
+
+/**
+ * A project keys `localeNotes` by whatever it calls its locales. A Nuxt table
+ * routinely carries all three names for one locale — `{ code: 'de', language:
+ * 'de-DE', file: 'de-DE.json' }` — and an exact-code lookup drops every note in
+ * a project that picked either of the other two.
+ */
+describe('localeNotes key resolution', () => {
+  const deDE = locale({ code: 'de', language: 'de-DE', file: 'de-DE.json' })
+
+  it('matches a note keyed by the locale code', () => {
+    const result = buildTranslationSystemPrompt({ localeNotes: { de: 'Use du.' } }, deDE)
+    expect(result).toContain('Use du.')
+  })
+
+  it('matches a note keyed by the language tag', () => {
+    const result = buildTranslationSystemPrompt({ localeNotes: { 'de-DE': 'Use du.' } }, deDE)
+    expect(result).toContain('Use du.')
+  })
+
+  it('matches a note keyed by the file name, with or without extension', () => {
+    expect(buildTranslationSystemPrompt({ localeNotes: { 'de-DE.json': 'Use du.' } }, deDE))
+      .toContain('Use du.')
+    const noFile = locale({ code: 'de', language: 'de-DE', file: 'de.json' })
+    expect(buildTranslationSystemPrompt({ localeNotes: { de: 'Use du.' } }, noFile))
+      .toContain('Use du.')
+  })
+
+  it('prefers the code over another locale\'s language tag', () => {
+    const result = buildTranslationSystemPrompt({
+      localeNotes: { 'de': 'By code', 'de-DE': 'By tag' },
+    }, deDE)
+    expect(result).toContain('By code')
+    expect(result).not.toContain('By tag')
+  })
+
+  it('labels the note with the language tag the model understands, not the lookup key', () => {
+    const result = buildTranslationSystemPrompt({ localeNotes: { de: 'Use du.' } }, deDE)
+    expect(result).toContain('TARGET LOCALE NOTE (de-DE): Use du.')
+  })
+
+  it('names the locale alongside the tag when the project gave it one', () => {
+    const named = locale({ code: 'de', language: 'de-DE', name: 'Deutsch' })
+    const result = buildTranslationSystemPrompt({ localeNotes: { de: 'Use du.' } }, named)
+    expect(result).toContain('TARGET LOCALE NOTE (de-DE, Deutsch): Use du.')
+  })
+
+  it('adds no note section when no key matches', () => {
+    const result = buildTranslationSystemPrompt({ localeNotes: { 'fr-FR': 'Formal French' } }, deDE)
+    expect(result).not.toContain('TARGET LOCALE NOTE')
+  })
+})
+
+describe('warnUnmatchedLocaleNotes', () => {
+  function configWith(localeNotes: Record<string, string>): I18nConfig {
+    return {
+      rootDir: '/tmp/project',
+      defaultLocale: 'de',
+      locales: [
+        { code: 'de', language: 'de-DE', file: 'de-DE.json' },
+        { code: 'en', language: 'en-US', file: 'en-US.json' },
+      ],
+      localeDirs: [],
+      layerRootDirs: [],
+      apps: [],
+      projectConfig: { localeNotes },
+    }
+  }
+
+  it('reports a key that matches no locale, listing the codes that exist', () => {
+    const warnSpy = vi.spyOn(log, 'warn').mockImplementation(() => {})
+    warnUnmatchedLocaleNotes(configWith({ 'de': 'ok', 'de-formal': 'typo' }))
+
+    expect(warnSpy).toHaveBeenCalledTimes(1)
+    expect(warnSpy.mock.calls[0]![0]).toContain('localeNotes entry "de-formal"')
+    expect(warnSpy.mock.calls[0]![0]).toContain('de, en')
+    warnSpy.mockRestore()
+  })
+
+  it('stays silent when every key matches one of a locale\'s names', () => {
+    const warnSpy = vi.spyOn(log, 'warn').mockImplementation(() => {})
+    warnUnmatchedLocaleNotes(configWith({ 'de': 'a', 'en-US': 'b' }))
+
+    expect(warnSpy).not.toHaveBeenCalled()
+    warnSpy.mockRestore()
+  })
+
+  it('reports one config once, so an all-layers run does not repeat itself', () => {
+    const warnSpy = vi.spyOn(log, 'warn').mockImplementation(() => {})
+    const config = configWith({ nope: 'typo' })
+    warnUnmatchedLocaleNotes(config)
+    warnUnmatchedLocaleNotes(config)
+
+    expect(warnSpy).toHaveBeenCalledTimes(1)
+    warnSpy.mockRestore()
+  })
+})
+
+describe('buildFallbackContext', () => {
+  it('carries the project context to the host agent', () => {
+    const context = buildFallbackContext({ context: 'Booking software.' }, DE, [locale({ code: 'en' })], { a: 'A' })
+    expect(context.projectContext).toBe('Booking software.')
+  })
+
+  it('resolves the locale note by any of the target locale\'s names', () => {
+    const target = locale({ code: 'en', language: 'en-US', file: 'en-US.json' })
+    const context = buildFallbackContext({ localeNotes: { en: 'Use American spelling.' } }, DE, [target], { a: 'A' })
+    expect(context.localeNote).toBe('Use American spelling.')
+    expect(context.targetLocale).toBe('en-US')
+  })
+
+  it('omits the note when several target locales share one context', () => {
+    const targets = [locale({ code: 'en', language: 'en-US' }), locale({ code: 'fr', language: 'fr-FR' })]
+    const context = buildFallbackContext({ localeNotes: { en: 'Use American spelling.' } }, DE, targets, { a: 'A' })
+    expect(context.localeNote).toBeUndefined()
+    expect(context.targetLocale).toBe('en-US, fr-FR')
   })
 })
 

@@ -72,7 +72,7 @@
       "additionalProperties": {
         "type": "string"
       },
-      "description": "Per-locale context included in translation prompts. Keys are locale codes (e.g., 'de-DE', 'en-US', 'de-DE-formal'), values describe register, regional conventions, or other locale-specific guidance."
+      "description": "Per-locale context included in translation prompts. Each key is matched against a locale's code, language tag, or file name (with or without extension) — whichever the project uses, e.g. 'de', 'de-DE' or 'de-DE.json'. Values describe register, regional conventions, or other locale-specific guidance. A key that matches no locale is reported and ignored."
     },
     "examples": {
       "type": "array",

@@ -141,6 +141,19 @@ export function findLocaleSuggestion(config: I18nConfig, localeRef: string): str
 const LOCALE_MATCH_FIELDS = ['code', 'language', 'file'] as const
 export type LocaleMatchField = (typeof LOCALE_MATCH_FIELDS)[number]
 
+/**
+ * Every key a config map keyed by locale may use for one locale, in
+ * resolveLocaleRef's precedence order. A file name counts with and without its
+ * extension: a project writing such a map picks whichever of its locales'
+ * identifiers it thinks in, and none of them is more correct than the others.
+ */
+export function localeMapKeys(locale: LocaleDefinition): string[] {
+  return [...new Set(LOCALE_MATCH_FIELDS.flatMap((field) => {
+    const ref = locale[field]
+    return ref ? [ref, stripJson(ref)] : []
+  }))]
+}
+
 export interface LocaleRefAmbiguity {
   ref: string
   /** The field that matched more than one locale. */
