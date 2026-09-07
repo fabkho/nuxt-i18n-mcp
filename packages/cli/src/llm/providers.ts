@@ -304,28 +304,82 @@ interface GoogleGenerateContentResponse {
   }>
 }
 
+/**
+ * The thinking settings to send with a Gemini request, or undefined for a model
+ * that is not a Gemini one (a base URL override can point at anything).
+ *
+ * Gemini thinks by default and the thinking tokens are spent from the same
+ * maxOutputTokens budget as the answer, so an unconfigured request can burn the
+ * whole budget and come back MAX_TOKENS with no JSON at all — identically on
+ * every retry, since the run asks at temperature 0. Translating UI strings is a
+ * simple task in Google's own guidance, so every family gets the least thinking
+ * it accepts.
+ *
+ * The two families disagree on the knob: 2.5 takes a token budget (Pro cannot
+ * go below 128; Flash and Flash-Lite take 0) and rejects a level, while 3.x
+ * takes a level and rejects a budget. 'low' rather than 'minimal' because
+ * 'minimal' errors on part of the 3.x line and 'low' is accepted across all of
+ * it.
+ */
+export function thinkingConfigFor(model: string): Record<string, unknown> | undefined {
+  const name = model.toLowerCase()
+  if (!name.includes('gemini-')) return undefined
+  if (name.includes('gemini-2.5')) {
+    return /gemini-2\.5-.*pro/.test(name) ? { thinkingBudget: 128 } : { thinkingBudget: 0 }
+  }
+  return { thinkingLevel: 'low' }
+}
+
+/**
+ * A 400 naming thinking is the endpoint refusing the thinkingConfig itself —
+ * an older model, or a proxy that does not forward the field. Anything else is
+ * a real failure and must not be masked by a second request.
+ */
+function rejectsThinkingConfig(error: unknown): boolean {
+  return error instanceof TranslateProviderError
+    && error.status === 400
+    && /thinking/i.test(error.message)
+}
+
 function createGoogleTranslateFn(config: LlmProviderConfig): TranslateFn {
   const apiKey = resolveApiKey('google', config.apiKey)
   // The REST path already carries the `models/` prefix, so accept a model name
   // written either way rather than producing `/models/models/gemini-…`.
   const model = config.model.replace(/^models\//, '')
   const url = joinUrl(config.baseUrl ?? DEFAULT_BASE_URL.google, `/v1beta/models/${model}:generateContent`)
+  const thinkingConfig = thinkingConfigFor(model)
+  // A rejection is a property of the endpoint, not of one request: once it says
+  // no, every later request in this process omits the field instead of paying
+  // for a rejected round trip first.
+  let sendThinkingConfig = thinkingConfig !== undefined
 
   return async (opts: TranslateRequest): Promise<TranslateResponse> => {
-    const response = await postJson<GoogleGenerateContentResponse>({
+    const requestBody = (withThinking: boolean) => ({
+      contents: [{ role: 'user', parts: [{ text: opts.userMessage }] }],
+      systemInstruction: { parts: [{ text: opts.systemPrompt }] },
+      generationConfig: {
+        maxOutputTokens: opts.maxTokens,
+        temperature: 0,
+        responseMimeType: 'application/json',
+        ...(withThinking && thinkingConfig ? { thinkingConfig } : {}),
+      },
+    })
+    const send = (withThinking: boolean) => postJson<GoogleGenerateContentResponse>({
       provider: 'google',
       url,
       headers: { 'x-goog-api-key': apiKey },
-      body: {
-        contents: [{ role: 'user', parts: [{ text: opts.userMessage }] }],
-        systemInstruction: { parts: [{ text: opts.systemPrompt }] },
-        generationConfig: {
-          maxOutputTokens: opts.maxTokens,
-          temperature: 0,
-          responseMimeType: 'application/json',
-        },
-      },
+      body: requestBody(withThinking),
     })
+
+    let response: GoogleGenerateContentResponse
+    try {
+      response = await send(sendThinkingConfig)
+    }
+    catch (error) {
+      if (!sendThinkingConfig || !rejectsThinkingConfig(error)) throw error
+      sendThinkingConfig = false
+      response = await send(false)
+    }
 
     const candidate = response.candidates?.[0]
     const text = (candidate?.content?.parts ?? []).map(part => part.text ?? '').join('')

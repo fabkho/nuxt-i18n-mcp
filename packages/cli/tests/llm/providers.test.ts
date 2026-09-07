@@ -4,6 +4,7 @@ import {
   classifyProviderError,
   resolveProviderBaseUrl,
   createTranslateFn,
+  thinkingConfigFor,
 } from '../../src/llm/providers.js'
 import type { LlmProvider } from '../../src/llm/providers.js'
 import { redactBaseUrl } from '../../src/commands/_shared.js'
@@ -174,6 +175,31 @@ function stubFetch(outcome: Outcome): FetchMock {
   })
   vi.stubGlobal('fetch', mock)
   return mock
+}
+
+/** Stub fetch with one outcome per call, repeating the last one afterwards. */
+function stubFetchSequence(outcomes: Outcome[]): FetchMock {
+  let call = 0
+  const mock: FetchMock = vi.fn(async (_url: string, _init: RequestInit) => {
+    const outcome = outcomes[Math.min(call++, outcomes.length - 1)]!
+    if (outcome instanceof Error) throw outcome
+    return new Response(outcome.body, {
+      status: outcome.status,
+      headers: { 'content-type': 'application/json' },
+    })
+  })
+  vi.stubGlobal('fetch', mock)
+  return mock
+}
+
+/** Read back the body of one of several requests the provider sent. */
+function bodyOfCall(mock: FetchMock, index: number): Record<string, unknown> {
+  const [, init] = mock.mock.calls[index]!
+  return JSON.parse(String(init.body)) as Record<string, unknown>
+}
+
+function generationConfigOf(body: Record<string, unknown>): Record<string, unknown> {
+  return body.generationConfig as Record<string, unknown>
 }
 
 interface CapturedRequest {
@@ -369,6 +395,7 @@ describe('google over fetch', () => {
         maxOutputTokens: 16384,
         temperature: 0,
         responseMimeType: 'application/json',
+        thinkingConfig: { thinkingLevel: 'low' },
       },
     })
   })
@@ -412,6 +439,100 @@ describe('google over fetch', () => {
     expect(captured(mock).url).toBe(
       'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent',
     )
+  })
+})
+
+/**
+ * Gemini spends thinking tokens from the same maxOutputTokens budget as the
+ * answer, so leaving the default in place is what turns a whole batch into a
+ * MAX_TOKENS response with no JSON in it. The two model families take different
+ * knobs and reject each other's, which is the whole reason this is a function.
+ */
+describe('thinkingConfigFor', () => {
+  const cases: Array<[string, Record<string, unknown> | undefined]> = [
+    ['gemini-2.5-pro', { thinkingBudget: 128 }],
+    ['gemini-2.5-pro-preview-06-05', { thinkingBudget: 128 }],
+    ['gemini-2.5-flash', { thinkingBudget: 0 }],
+    ['gemini-2.5-flash-lite', { thinkingBudget: 0 }],
+    ['gemini-3.5-flash', { thinkingLevel: 'low' }],
+    ['gemini-3-pro-preview', { thinkingLevel: 'low' }],
+    ['gemini-2.0-flash', { thinkingLevel: 'low' }],
+    ['GEMINI-3.5-FLASH', { thinkingLevel: 'low' }],
+    ['gpt-4o', undefined],
+    ['llama3.1:8b', undefined],
+  ]
+
+  for (const [model, expected] of cases) {
+    it(`maps ${model} to ${JSON.stringify(expected)}`, () => {
+      expect(thinkingConfigFor(model)).toEqual(expected)
+    })
+  }
+})
+
+describe('google thinking configuration', () => {
+  async function googleTranslate(model: string, outcomes: Outcome[]) {
+    const mock = stubFetchSequence(outcomes)
+    const translate = await createTranslateFn({ provider: 'google', model, apiKey: 'test-key' })
+    return { mock, translate }
+  }
+
+  it('sends the model-appropriate thinking budget for a 2.5 model', async () => {
+    const { mock, translate } = await googleTranslate('gemini-2.5-flash', [jsonBody(OK_BODY.google)])
+    await translate(REQUEST)
+
+    expect(generationConfigOf(bodyOfCall(mock, 0)).thinkingConfig).toEqual({ thinkingBudget: 0 })
+  })
+
+  it('retries once without thinkingConfig when the endpoint rejects the field', async () => {
+    const { mock, translate } = await googleTranslate('gemini-3.5-flash', [
+      jsonBody({ error: { message: 'thinkingLevel is not supported for this model' } }, 400),
+      jsonBody(OK_BODY.google),
+    ])
+
+    const response = await translate(REQUEST)
+
+    expect(mock).toHaveBeenCalledTimes(2)
+    expect(generationConfigOf(bodyOfCall(mock, 0)).thinkingConfig).toEqual({ thinkingLevel: 'low' })
+    expect(generationConfigOf(bodyOfCall(mock, 1))).not.toHaveProperty('thinkingConfig')
+    expect(response.text).toBe('{"greeting":"Hallo"}')
+  })
+
+  it('stops sending thinkingConfig for the rest of the process after a rejection', async () => {
+    const { mock, translate } = await googleTranslate('gemini-3.5-flash', [
+      jsonBody({ error: { message: 'Unknown name "thinkingConfig"' } }, 400),
+      jsonBody(OK_BODY.google),
+    ])
+
+    await translate(REQUEST)
+    await translate(REQUEST)
+
+    expect(mock).toHaveBeenCalledTimes(3)
+    expect(generationConfigOf(bodyOfCall(mock, 2))).not.toHaveProperty('thinkingConfig')
+  })
+
+  it('does not retry a 400 that is about something else', async () => {
+    const { mock, translate } = await googleTranslate('gemini-3.5-flash', [
+      jsonBody({ error: { message: 'Invalid JSON payload' } }, 400),
+      jsonBody(OK_BODY.google),
+    ])
+
+    const error = await translate(REQUEST).catch((e: unknown) => e)
+
+    expect(mock).toHaveBeenCalledTimes(1)
+    expect(error).toMatchObject({ kind: 'provider', status: 400 })
+  })
+
+  it('sends no thinkingConfig at all for a non-Gemini model behind a base URL', async () => {
+    const mock = stubFetch(jsonBody(OK_BODY.google))
+    const translate = await createTranslateFn({
+      provider: 'google',
+      model: 'qwen2.5:14b',
+      apiKey: 'test-key',
+      baseUrl: 'https://gateway.example',
+    })
+    await translate(REQUEST)
+
+    expect(generationConfigOf(captured(mock).body)).not.toHaveProperty('thinkingConfig')
   })
 })
 
