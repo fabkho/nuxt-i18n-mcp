@@ -40,16 +40,23 @@ import { extractJsonFromResponse } from './json-salvage.js'
 import { openTranslationMemory } from './memory.js'
 import { requestWithRetry } from './retry.js'
 import type { TranslateRunState } from './retry.js'
+import { planBatches, expansionFor, TRANSLATE_MAX_TOKENS, TRANSLATE_BUDGET_CHARS } from './batching.js'
+import type { KeyEntry } from './batching.js'
 
 /**
- * Fixed maxTokens budget for a translate request. Deliberately independent
- * of batch size — models simply stop when the JSON object is closed.
+ * How often a batch that came back truncated may be halved before its keys are
+ * given up as `truncated`. Bounds the request count of one planned batch at
+ * 2^4 leaf requests, and its size at 50 → 25 → 12 → 6 → 3 keys for the default
+ * batchSize: below that, a response that still does not fit is not a batching
+ * problem.
  */
-const TRANSLATE_MAX_TOKENS = 16384
+const MAX_SPLIT_DEPTH = 4
 
 /**
  * Total progress steps for translate_missing: per locale with missing keys,
- * one step per batch plus a start and a complete step (the +2).
+ * one step per batchSize keys translated plus a start and a complete step
+ * (the +2). Steps count keys rather than requests because reactive splitting
+ * makes the request count of a locale unknowable before the run.
  */
 export function computeProgressTotal(missingKeyCounts: number[], maxBatch: number): number {
   return missingKeyCounts.reduce((sum, count) => {
@@ -213,39 +220,67 @@ export async function translateMissing(opts: TranslateMissingOptions): Promise<T
     }
 
     if (opts.translateFn) {
+      const translateFn = opts.translateFn
       const translated: string[] = []
       const failed: Array<{ key: string, reason: TranslateFailReason }> = []
-      const keyEntries = Object.entries(keysAndValues)
+      const keyEntries: KeyEntry[] = Object.entries(keysAndValues)
       const allTranslations: Record<string, string> = {}
-      const totalBatches = Math.ceil(keyEntries.length / maxBatch)
+      const totalKeys = keyEntries.length
       let model: string | undefined
+      let requests = 0
+      let keysDone = 0
+      let stepsReported = 0
 
-      for (let i = 0; i < keyEntries.length; i += maxBatch) {
-        if (runState.aborted) break
-        const batchNum = Math.floor(i / maxBatch) + 1
-        const batch = Object.fromEntries(keyEntries.slice(i, i + maxBatch))
+      /**
+       * One step per maxBatch keys accounted for — the unit
+       * computeProgressTotal announced. Splitting changes how many requests a
+       * locale takes, never how many keys it has to get through, so the steps
+       * still land on the announced total.
+       */
+      async function reportKeyProgress(): Promise<void> {
+        const step = Math.ceil(keysDone / maxBatch)
+        if (step <= stepsReported) return
+        stepsReported = step
+        await reportProgress(`${target.code}: ${keysDone}/${totalKeys} keys`)
+      }
 
+      /** Every key of a batch lands in exactly one bucket — totals must reconcile. */
+      function failBatch(batch: KeyEntry[], reason: TranslateFailReason): void {
+        for (const [key] of batch) failed.push({ key, reason })
+        keysDone += batch.length
+      }
+
+      /**
+       * Issue one request for `batch` and resolve whatever it did not answer:
+       * a response cut off at the token limit is re-issued for its remainder,
+       * or halved when nothing usable arrived, bounded by MAX_SPLIT_DEPTH.
+       * Requests stay sequential within a locale.
+       */
+      async function translateBatch(batch: KeyEntry[], depth: number): Promise<void> {
+        if (runState.aborted || batch.length === 0) return
+
+        const batchValues = Object.fromEntries(batch)
         const systemPrompt = buildTranslationSystemPrompt(config.projectConfig, target, config.localeFileFormat)
         const userMessage = buildTranslationUserMessage(
           refLocale!.language || refLocale!.code,
           target.language || target.code,
-          batch,
+          batchValues,
           config.localeFileFormat,
         )
 
+        requests++
         const outcome = await requestWithRetry(
-          opts.translateFn,
+          translateFn,
           { systemPrompt, userMessage, maxTokens: TRANSLATE_MAX_TOKENS },
           {
-            label: `batch ${batchNum} in ${target.code}`,
-            truncationHint: 'Reduce batchSize.',
+            label: `batch of ${batch.length} key(s) in ${target.code}`,
             logModel: true,
             runState,
             parse: (text, truncated) => {
               // Keys the model invented are dropped here; keys it omitted are
               // accounted for below.
               const parsed = extractJsonFromResponse(text, { truncated })
-              const batchKeys = new Set(Object.keys(batch))
+              const batchKeys = new Set(Object.keys(batchValues))
               const batchTranslations: Record<string, string> = {}
               for (const [key, value] of Object.entries(parsed)) {
                 if (batchKeys.has(key) && typeof value === 'string') {
@@ -257,30 +292,76 @@ export async function translateMissing(opts: TranslateMissingOptions): Promise<T
           },
         )
         model = outcome.model ?? model
-        // A cut-off batch still carries the pairs that arrived ('partial'), so
-        // its keys are read exactly like a complete batch's; the ones it does
-        // not carry were lost to the cut rather than passed over by the model.
-        const batchTranslations = outcome.status === 'ok' || outcome.status === 'partial' ? outcome.value : null
-        const batchTruncated = outcome.status === 'truncated' || outcome.status === 'partial'
 
-        // Account for every batch key: translated, omitted by the model,
-        // or lost to a failed batch — totals must always reconcile.
-        for (const key of Object.keys(batch)) {
-          const value = batchTranslations?.[key]
+        if (outcome.status === 'failed') {
+          // Transport or parse failure that survived the retry: a smaller
+          // request does not make a broken connection work.
+          failBatch(batch, 'provider-error')
+          await reportKeyProgress()
+          return
+        }
+
+        if (outcome.status === 'truncated') {
+          // Nothing usable arrived. Half the keys is half the output, so the
+          // same token budget may well hold the answer — until one key is
+          // left, which genuinely does not fit.
+          if (batch.length === 1 || depth >= MAX_SPLIT_DEPTH) {
+            failBatch(batch, 'truncated')
+            await reportKeyProgress()
+            return
+          }
+          const half = Math.ceil(batch.length / 2)
+          const head = batch.slice(0, half)
+          const tail = batch.slice(half)
+          log.info(`Translate batch of ${batch.length} truncated for ${target.code} — split into ${head.length} + ${tail.length}`)
+          await translateBatch(head, depth + 1)
+          await translateBatch(tail, depth + 1)
+          return
+        }
+
+        // A cut-off response still carries the pairs that arrived ('partial'),
+        // so its keys are read exactly like a complete response's; the ones it
+        // does not carry were lost to the cut rather than passed over by the
+        // model, and are re-asked for rather than failed.
+        const remainder: KeyEntry[] = []
+        for (const entry of batch) {
+          const [key] = entry
+          const value = outcome.value[key]
           if (typeof value === 'string') {
             allTranslations[key] = value
             translated.push(key)
+            keysDone++
+          } else if (outcome.status === 'partial') {
+            remainder.push(entry)
           } else {
-            failed.push({
-              key,
-              reason: batchTruncated
-                ? 'truncated'
-                : batchTranslations === null ? 'provider-error' : 'omitted-by-model',
-            })
+            failed.push({ key, reason: 'omitted-by-model' })
+            keysDone++
           }
         }
+        await reportKeyProgress()
 
-        await reportProgress(`${target.code}: batch ${batchNum}/${totalBatches}`)
+        if (remainder.length === 0) return
+        if (depth >= MAX_SPLIT_DEPTH) {
+          failBatch(remainder, 'truncated')
+          await reportKeyProgress()
+          return
+        }
+        // A partial response carried at least one key, so the remainder is
+        // strictly smaller than the batch and the recursion terminates.
+        log.info(`Translate batch of ${batch.length} truncated for ${target.code} — kept ${batch.length - remainder.length}, re-asking for ${remainder.length}`)
+        await translateBatch(remainder, depth + 1)
+      }
+
+      // Weight-based planning keeps most requests inside the token budget;
+      // batches are never larger than maxBatch, only smaller.
+      const plannedBatches = planBatches(keyEntries, {
+        maxKeys: maxBatch,
+        budgetChars: TRANSLATE_BUDGET_CHARS,
+        expansion: expansionFor(target),
+      })
+      for (const batch of plannedBatches) {
+        if (runState.aborted) break
+        await translateBatch(batch, 0)
       }
 
       const placeholderValidation = mergePlaceholderValidation(Object.entries(allTranslations).map(([key, value]) => {
@@ -323,7 +404,7 @@ export async function translateMissing(opts: TranslateMissingOptions): Promise<T
           for (const key of translated) {
             failed.push({ key, reason: 'write-error' })
           }
-          return { result: withStale({ mode: 'provider', missing, translated: [], failed, skipped: [], batches: totalBatches, model, writeError: toErrorMessage(error) }) }
+          return { result: withStale({ mode: 'provider', missing, translated: [], failed, skipped: [], batches: requests, model, writeError: toErrorMessage(error) }) }
         }
         // Written, so remember what each value was translated from — whether or
         // not this run was allowed to overwrite stale ones.
@@ -334,7 +415,8 @@ export async function translateMissing(opts: TranslateMissingOptions): Promise<T
       }
 
       await reportProgress(`Complete ${target.code}`)
-      return { result: withStale({ mode: 'provider', missing, translated, failed, skipped: [], batches: totalBatches, model, ...(placeholderValidation ? { placeholderValidation } : {}) }) }
+      // `batches` counts the requests the locale actually took, splits included.
+      return { result: withStale({ mode: 'provider', missing, translated, failed, skipped: [], batches: requests, model, ...(placeholderValidation ? { placeholderValidation } : {}) }) }
     } else {
       // Agent mode: return context for the host agent to translate inline
       const fallbackContext = buildFallbackContext(

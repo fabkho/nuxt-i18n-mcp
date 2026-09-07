@@ -327,7 +327,7 @@ describe('translateMissing through the translate seam', () => {
       expect(await readLocale('fr')).toEqual({})
     })
 
-    it('fails batch keys with reason "truncated" when the response was cut off', async () => {
+    it('fails batch keys with reason "truncated" when not even a single key fits', async () => {
       let calls = 0
       const result = await translateMissing({
         projectDir,
@@ -339,7 +339,9 @@ describe('translateMissing through the translate seam', () => {
         },
       })
 
-      expect(calls).toBe(1) // truncation is not retried — same budget truncates again
+      // No batch is ever re-issued unchanged — the same budget would truncate
+      // again — but it is split: 4 → 2 + 2 → (1 + 1) + (1 + 1).
+      expect(calls).toBe(7)
       expect(result.results.en.translated).toEqual([])
       expect(result.results.en.failed).toHaveLength(4)
       expect(result.results.en.failed).toEqual(
@@ -471,6 +473,163 @@ describe('translateMissing through the translate seam', () => {
       )
       expect(result.results.en.failed).toHaveLength(4)
       expect(await readLocale('en')).toEqual({})
+    })
+  })
+
+  /**
+   * A batch is a guess at what fits in one response, and a wrong guess used to
+   * cost every key in it. The run answers a cut-off response by asking for
+   * less — and stops splitting before the request count runs away.
+   */
+  describe('reactive split of a batch the provider cut off', () => {
+    /** Ten keys, more than any fake below answers in one response. */
+    const tenKeys = Object.fromEntries(
+      Array.from({ length: 10 }, (_, i) => [`item${i}`, `Hilfetext Nummer ${i}`]),
+    )
+
+    /** Cut off before a single pair completed: nothing to salvage. */
+    const CUT_BEFORE_FIRST_PAIR = '{"item0":"[t] Hilfetext Numm'
+
+    beforeEach(async () => {
+      await writeFile(join(localesDir, 'de.json'), JSON.stringify(tenKeys, null, 2))
+      clearConfigCache()
+    })
+
+    /** Answer a batch the way a well-behaved provider would. */
+    function answer(batch: Record<string, string>) {
+      return {
+        text: JSON.stringify(Object.fromEntries(Object.entries(batch).map(([k, v]) => [k, `[t] ${v}`]))),
+        model: 'fake-model',
+      }
+    }
+
+    /** A backend that cannot answer more than `limit` keys in one response. */
+    function capacityLimited(limit: number): { fn: TranslateFn, callCount: () => number } {
+      let calls = 0
+      const fn: TranslateFn = async ({ userMessage }) => {
+        calls++
+        const batch = parseBatch(userMessage)
+        if (Object.keys(batch).length > limit) {
+          return { text: CUT_BEFORE_FIRST_PAIR, model: 'fake-model', truncated: true }
+        }
+        return answer(batch)
+      }
+      return { fn, callCount: () => calls }
+    }
+
+    it('halves a truncated batch until it fits and translates every key', async () => {
+      const { fn, callCount } = capacityLimited(3)
+
+      const result = await translateMissing({
+        projectDir,
+        layer: 'root',
+        targetLocales: ['en'],
+        translateFn: fn,
+      })
+
+      expect(result.results.en.translated).toHaveLength(10)
+      expect(result.results.en.failed).toEqual([])
+      // 10 → 5 + 5 → (3 + 2) + (3 + 2): three cut-off requests, four answered —
+      // a split tree, not one request per key.
+      expect(callCount()).toBe(7)
+      expect(result.results.en.batches).toBe(7)
+      expect((await readLocale('en')).item9).toBe('[t] Hilfetext Nummer 9')
+    })
+
+    it('re-asks only for the keys a partial response did not carry', async () => {
+      let calls = 0
+      const result = await translateMissing({
+        projectDir,
+        layer: 'root',
+        targetLocales: ['en'],
+        translateFn: async ({ userMessage }) => {
+          calls++
+          const batch = parseBatch(userMessage)
+          const pairs = Object.entries(batch)
+          if (pairs.length < 10) return answer(batch)
+          // Six pairs, each witnessed by the comma the model wrote after it,
+          // then the cut mid-value.
+          const carried = pairs.slice(0, 6)
+            .map(([k, v]) => `${JSON.stringify(k)}:${JSON.stringify(`[t] ${v}`)}`)
+            .join(',')
+          return { text: `{${carried},"item6":"[t] Hilfe`, model: 'fake-model', truncated: true }
+        },
+      })
+
+      expect(calls).toBe(2) // the cut batch, then its four-key remainder
+      expect(result.results.en.translated).toHaveLength(10)
+      expect(result.results.en.failed).toEqual([])
+      expect((await readLocale('en')).item6).toBe('[t] Hilfetext Nummer 6')
+    })
+
+    it('gives up as truncated on keys that do not fit even alone, within a bounded request count', async () => {
+      let calls = 0
+      const result = await translateMissing({
+        projectDir,
+        layer: 'root',
+        targetLocales: ['en'],
+        translateFn: async () => {
+          calls++
+          return { text: CUT_BEFORE_FIRST_PAIR, model: 'fake-model', truncated: true }
+        },
+      })
+      const en = result.results.en
+
+      expect(en.translated).toEqual([])
+      expect(en.failed).toHaveLength(10)
+      expect(en.failed.every((f: { reason: string }) => f.reason === 'truncated')).toBe(true)
+      // Splitting stops at depth 4, so one planned batch costs at most
+      // 2^5 - 1 requests however badly the provider behaves.
+      expect(calls).toBe(19)
+      expect(calls).toBeLessThanOrEqual(2 ** 5 - 1)
+      expect(en.missing).toBe(en.translated.length + en.failed.length + en.skipped.length)
+      expect(await readLocale('en')).toEqual({})
+    })
+
+    // generous timeout: the production retry waits 4s before the second attempt
+    it('does not split a batch that failed for a reason a smaller batch would not fix', { timeout: 15_000 }, async () => {
+      let calls = 0
+      const result = await translateMissing({
+        projectDir,
+        layer: 'root',
+        targetLocales: ['en'],
+        translateFn: async () => {
+          calls++
+          throw new TranslateProviderError('Connection reset by peer', 'provider')
+        },
+      })
+
+      expect(calls).toBe(2) // one attempt plus the retry, and no split tree
+      expect(result.results.en.translated).toEqual([])
+      expect(result.results.en.failed).toHaveLength(10)
+      expect(result.results.en.failed.every((f: { reason: string }) => f.reason === 'provider-error')).toBe(true)
+    })
+
+    it('reports progress in keys and still lands on the announced step total', async () => {
+      const messages: string[] = []
+      let announced = -1
+      const { fn } = capacityLimited(3)
+
+      await translateMissing({
+        projectDir,
+        layer: 'root',
+        targetLocales: ['en'],
+        batchSize: 4,
+        translateFn: fn,
+        onProgressTotal: (total) => { announced = total },
+        progressFn: async (message) => { messages.push(message) },
+      })
+
+      // Batches of 4, 4 and 2; the two full ones are split in half by the
+      // backend's capacity — which changes the request count, not the steps.
+      expect(messages).toEqual([
+        'Starting en: 10 missing keys',
+        'en: 2/10 keys',
+        'en: 6/10 keys',
+        'en: 10/10 keys',
+        'Complete en',
+      ])
+      expect(messages).toHaveLength(announced)
     })
   })
 

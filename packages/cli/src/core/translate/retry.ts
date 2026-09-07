@@ -38,10 +38,8 @@ export interface RequestContext<T> {
    * tail of the body untrustworthy — a parser that salvages needs to know.
    */
   parse: (responseText: string, truncated: boolean) => T
-  /** Identifies the request in warnings, e.g. `batch 2 in en` or `en`. */
+  /** Identifies the request in warnings, e.g. `batch of 12 key(s) in en` or `en`. */
   label: string
-  /** Actionable advice appended to the truncation warning. */
-  truncationHint?: string
   /** Report the responding model — batched runs log it per response. */
   logModel?: boolean
   runState?: TranslateRunState
@@ -103,7 +101,6 @@ export async function requestWithRetry<T>(
         // budget would truncate again, so fail fast. What arrived before the
         // cut is still worth keeping: discarding it loses a whole batch over
         // its last key.
-        const hint = ctx.truncationHint ? ` ${ctx.truncationHint}` : ''
         let salvaged: T | undefined
         try {
           const parsed = ctx.parse(response.text, true)
@@ -115,11 +112,11 @@ export async function requestWithRetry<T>(
         if (salvaged !== undefined) {
           log.warn(
             `Translate response truncated for ${ctx.label}: provider hit the token limit — `
-            + `kept ${recoveredCount(salvaged)} complete translation(s), the rest are reported as failed.${hint}`,
+            + `kept ${recoveredCount(salvaged)} complete translation(s), the rest did not arrive.`,
           )
           return { status: 'partial', value: salvaged, model }
         }
-        log.warn(`Translate response truncated for ${ctx.label}: provider hit the token limit before anything usable arrived.${hint}`)
+        log.warn(`Translate response truncated for ${ctx.label}: provider hit the token limit before anything usable arrived.`)
         return { status: 'truncated', model }
       }
       if (response.text.trim() === '') {
