@@ -8,7 +8,7 @@ import { readdir } from 'node:fs/promises'
 
 import { detectI18nConfig, clearConfigCache } from '../config/detector.js'
 import { serializeLayerGraph } from '../config/layer-graph.js'
-import type { I18nConfig } from '../config/types.js'
+import type { I18nConfig, ProjectConfig } from '../config/types.js'
 import { readLocaleData, readLocaleDataIfPresent, resolveLocaleEntries } from '../io/locale-data.js'
 import { getFormat } from '../io/formats.js'
 import { getNestedValue, getLeafKeys } from '../io/key-operations.js'
@@ -27,6 +27,62 @@ import type {
 import { findLayerOrThrow, findReferenceLocaleOrThrow, findLocaleImpl, localeRefInfo, resolveLayersToScan } from './shared.js'
 import { resolveProtectedLocales } from './ops-translate.js'
 
+// ─── paging ──────────────────────────────────────────────────────
+
+/**
+ * How a read that was capped reports what it left behind.
+ *
+ * The cap is applied after the full computation, so every count a caller
+ * branches on — `totalMatches`, `totalMissingKeys` — is the number for the
+ * whole project rather than for the window returned.
+ */
+export interface PagedResult {
+  truncated: boolean
+  /** Where a follow-up call has to start to continue. Present only when truncated. */
+  nextOffset?: number
+}
+
+/** The requested window of `items`, and whether anything was left behind it. */
+function paginate<T>(
+  items: T[],
+  opts: { limit?: number, offset?: number },
+): { page: T[] } & PagedResult {
+  const offset = Math.max(0, Math.trunc(opts.offset ?? 0))
+  // No limit means no cap: a terminal answer is piped into jq, not into a
+  // context window, so the unbounded read stays available.
+  const end = opts.limit === undefined ? items.length : offset + Math.max(0, Math.trunc(opts.limit))
+  const page = items.slice(offset, end)
+  return end < items.length
+    ? { page, truncated: true, nextOffset: end }
+    : { page, truncated: false }
+}
+
+// ─── discover ────────────────────────────────────────────────────
+
+/**
+ * The project-config fields that carry translation prose rather than structure.
+ * The MCP prompts assemble the same text into the instructions they hand a
+ * host, so repeating it in every discover answer costs a caller kilobytes of
+ * context for something it already has.
+ */
+const TRANSLATION_GUIDANCE_FIELDS = ['context', 'glossary', 'translationPrompt', 'localeNotes', 'examples'] as const
+
+type TranslationGuidanceField = (typeof TRANSLATION_GUIDANCE_FIELDS)[number]
+
+/** `projectConfig` with the translation prose left out, and a flag saying so. */
+export interface TrimmedProjectConfig extends Omit<ProjectConfig, TranslationGuidanceField> {
+  /** The omitted fields exist — ask for them with `includeTranslationGuidance`. */
+  translationGuidanceOmitted: true
+}
+
+/**
+ * What {@link describeProject} answers with: {@link DescribeProjectResult} with
+ * a `projectConfig` that is trimmed unless the translation prose was asked for.
+ */
+export interface DescribeProjectOutcome extends Omit<DescribeProjectResult, 'projectConfig'> {
+  projectConfig?: ProjectConfig | TrimmedProjectConfig
+}
+
 /**
  * Everything a caller needs to know about a project before touching it:
  * resolved config, locale directories, the layer topology, and which locales
@@ -40,17 +96,30 @@ import { resolveProtectedLocales } from './ops-translate.js'
  */
 export async function describeProject(opts: {
   projectDir?: string
-} = {}): Promise<DescribeProjectResult> {
+  /** Keep the translation prose in `projectConfig`. Default: false. */
+  includeTranslationGuidance?: boolean
+} = {}): Promise<DescribeProjectOutcome> {
   // detectConfig first: it warms the config cache listLocaleDirs reuses.
   const config = await detectConfig(opts.projectDir)
   const layers = await listLocaleDirs(opts.projectDir)
 
   return {
     ...config,
+    ...(config.projectConfig !== undefined && opts.includeTranslationGuidance !== true
+      ? { projectConfig: withoutTranslationGuidance(config.projectConfig) }
+      : {}),
     protectedLocales: resolveProtectedLocales(config).map(l => l.code),
     layers,
     layerGraph: serializeLayerGraph(config),
   }
+}
+
+function withoutTranslationGuidance(projectConfig: ProjectConfig): TrimmedProjectConfig {
+  // Dropped by name rather than picked by name: a structural field added to
+  // ProjectConfig has to keep reaching the caller without an edit here.
+  const trimmed = { ...projectConfig, translationGuidanceOmitted: true } as const
+  for (const field of TRANSLATION_GUIDANCE_FIELDS) delete trimmed[field]
+  return trimmed
 }
 
 /**
@@ -131,21 +200,66 @@ export async function listLocaleDirs(projectDir?: string): Promise<LocaleDirInfo
   return results
 }
 
+// ─── get_translations ─────────────────────────────────────────────
+
 /**
- * Get translation values for given key paths from a specific locale and layer.
+ * One layer's answer: locale code → key → value.
+ *
+ * Two things the index signature cannot state: `compact` replaces the locale
+ * entries with a single `byKey` one, and a read the cap cut short carries
+ * `truncated: true` and `nextOffset` beside the locale codes.
+ */
+export type GetTranslationsResult = Record<string, Record<string, unknown>>
+
+/**
+ * What a read that named no layer answers with: one entry per layer defining at
+ * least one of the keys, each holding exactly what a read of that layer alone
+ * would have returned.
+ */
+export interface GetTranslationsByLayer extends PagedResult {
+  byLayer: Record<string, GetTranslationsResult>
+  /** Every layer that was read, the ones defining none of the keys included. */
+  layersSearched: string[]
+}
+
+export type GetTranslationsOutcome = GetTranslationsResult | GetTranslationsByLayer
+
+/** One layer's locale files, read once, with the keys this read asks of them. */
+interface LayerSheets {
+  layer: string
+  sheets: Array<{ locale: string, data: Record<string, unknown> }>
+  keys: string[]
+}
+
+/**
+ * Get translation values for given key paths, from one layer or from every
+ * layer that defines them.
+ *
+ * Either `keys` or `keyPrefix` has to be given. A read with neither has no
+ * subject, and defaulting that to the whole layer is how a caller ends up
+ * holding a megabyte it never asked for.
  */
 export async function getTranslations(opts: {
-  layer: string
+  layer?: string
   locale: string
-  keys: string[]
+  keys?: string[]
+  keyPrefix?: string
   compact?: boolean
+  limit?: number
+  offset?: number
   projectDir?: string
-}): Promise<Record<string, Record<string, unknown>>> {
-  const { layer, locale, keys } = opts
+}): Promise<GetTranslationsOutcome> {
+  const { layer, locale, keyPrefix } = opts
   const dir = opts.projectDir ?? process.cwd()
   const config = await detectI18nConfig(dir)
 
-  findLayerOrThrow(config, layer)
+  const requestedKeys = opts.keys ?? []
+  if (requestedKeys.length === 0 && (keyPrefix === undefined || keyPrefix === '')) {
+    throw new ToolError(
+      'Pass keys (the dot-path keys to read) or keyPrefix (a namespace to read every leaf key under). One of the two is required.',
+      'EARG',
+    )
+  }
 
   const localesToRead = locale === '*'
     ? config.locales
@@ -157,44 +271,142 @@ export async function getTranslations(opts: {
         return [found]
       })()
 
-  const results: Record<string, Record<string, unknown>> = {}
+  const layersToRead = resolveLayersToScan(config, layer)
 
-  for (const loc of localesToRead) {
-    const data = await readLocaleData(config, layer, loc)
-    results[loc.code] = Object.fromEntries(
-      keys.map(k => [k, getNestedValue(data, k) ?? null]),
+  const perLayer: LayerSheets[] = []
+  for (const localeDir of layersToRead) {
+    const sheets: LayerSheets['sheets'] = []
+    for (const loc of localesToRead) {
+      // A named layer keeps failing loudly on a locale file it has not got,
+      // which is what a caller who named it means. Reading every layer cannot:
+      // a layer without that locale is the normal case there, not a mistake.
+      const data = layer === undefined
+        ? await readLocaleDataIfPresent(config, localeDir.layer, loc)
+        : await readLocaleData(config, localeDir.layer, loc)
+      if (!data) continue
+      sheets.push({ locale: loc.code, data })
+    }
+    perLayer.push({
+      layer: localeDir.layer,
+      sheets,
+      keys: resolveReadKeys(sheets, requestedKeys, keyPrefix),
+    })
+  }
+
+  const compact = opts.compact === true && locale === '*' && localesToRead.length > 1
+
+  // The unit the cap counts is one (layer, key) pair, which for a named layer
+  // is simply one key.
+  const answering = layer === undefined ? perLayer.filter(definesAnyKey) : perLayer
+  const { page, ...paging } = paginate(
+    answering.flatMap(entry => entry.keys.map(key => ({ layer: entry.layer, key }))),
+    opts,
+  )
+
+  const keysByLayer = new Map<string, string[]>()
+  for (const pair of page) {
+    const keys = keysByLayer.get(pair.layer)
+    if (keys) keys.push(pair.key)
+    else keysByLayer.set(pair.layer, [pair.key])
+  }
+
+  if (layer !== undefined) {
+    const values = readValues(perLayer[0]?.sheets ?? [], keysByLayer.get(layer) ?? [], compact)
+    // Merged into the locale map rather than nested under it: an uncapped read
+    // has to stay byte-for-byte the answer this operation always gave, so the
+    // flag can only be a sibling of the locale codes.
+    return paging.truncated ? { ...values, ...paging } as unknown as GetTranslationsResult : values
+  }
+
+  const byLayer: Record<string, GetTranslationsResult> = {}
+  for (const entry of answering) {
+    const keys = keysByLayer.get(entry.layer)
+    if (keys === undefined) continue
+    byLayer[entry.layer] = readValues(entry.sheets, keys, compact)
+  }
+
+  return { byLayer, layersSearched: perLayer.map(entry => entry.layer), ...paging }
+}
+
+/**
+ * The keys one layer is read for: the explicit list, plus every leaf key the
+ * layer defines under `keyPrefix`. Sorted, so the window a limit returns is the
+ * same window on the next call.
+ */
+function resolveReadKeys(
+  sheets: LayerSheets['sheets'],
+  keys: string[],
+  keyPrefix?: string,
+): string[] {
+  if (keyPrefix === undefined || keyPrefix === '') return keys
+
+  const found = new Set(keys)
+  for (const sheet of sheets) {
+    for (const key of getLeafKeys(sheet.data)) {
+      if (key === keyPrefix || key.startsWith(`${keyPrefix}.`)) found.add(key)
+    }
+  }
+  return [...found].sort()
+}
+
+/** True when the layer holds a value for at least one of the keys asked of it. */
+function definesAnyKey(entry: LayerSheets): boolean {
+  return entry.keys.some(key => entry.sheets.some(sheet => getNestedValue(sheet.data, key) !== undefined))
+}
+
+function readValues(
+  sheets: LayerSheets['sheets'],
+  keys: string[],
+  compact: boolean,
+): GetTranslationsResult {
+  const values: GetTranslationsResult = {}
+  for (const sheet of sheets) {
+    values[sheet.locale] = Object.fromEntries(
+      keys.map(k => [k, getNestedValue(sheet.data, k) ?? null]),
     )
   }
+  return compact ? summarizeByKey(values, keys, sheets.length) : values
+}
 
-  // Compact mode: summarize by key across all locales
-  if (opts.compact && locale === '*' && localesToRead.length > 1) {
-    const byKey: Record<string, { status: string; totalPresent: number; empty?: string[]; missing?: string[] }> = {}
-    for (const key of keys) {
-      let present = 0
-      const empty: string[] = []
-      const missing: string[] = []
-      for (const loc of localesToRead) {
-        const val = results[loc.code]?.[key]
-        if (val === undefined || val === null) {
-          missing.push(loc.code)
-        } else if (val === '') {
-          empty.push(loc.code)
-        } else {
-          present++
-        }
-      }
-      byKey[key] = {
-        status: present === localesToRead.length ? 'ok' : present > 0 ? 'partial' : 'missing',
-        totalPresent: present,
-        ...(empty.length > 0 && { empty }),
-        ...(missing.length > 0 && { missing }),
+/** One row per key — how many locales hold a value — instead of every value. */
+function summarizeByKey(
+  values: GetTranslationsResult,
+  keys: string[],
+  localeCount: number,
+): GetTranslationsResult {
+  const byKey: Record<string, { status: string; totalPresent: number; empty?: string[]; missing?: string[] }> = {}
+  for (const key of keys) {
+    let present = 0
+    const empty: string[] = []
+    const missing: string[] = []
+    for (const [code, row] of Object.entries(values)) {
+      const val = row[key]
+      if (val === undefined || val === null) {
+        missing.push(code)
+      } else if (val === '') {
+        empty.push(code)
+      } else {
+        present++
       }
     }
-    return { byKey } as unknown as Record<string, Record<string, unknown>>
+    byKey[key] = {
+      status: present === localeCount ? 'ok' : present > 0 ? 'partial' : 'missing',
+      totalPresent: present,
+      ...(empty.length > 0 && { empty }),
+      ...(missing.length > 0 && { missing }),
+    }
   }
-
-  return results
+  return { byKey } as unknown as GetTranslationsResult
 }
+
+// ─── get_missing_translations ──────────────────────────────────────
+
+/**
+ * The missing keys, capped. The unit is one key of one (layer, locale) pair —
+ * the nested map flattened — while `summary.totalMissingKeys` stays the count
+ * for the whole project.
+ */
+export interface MissingTranslationsPage extends MissingTranslationsResult, PagedResult {}
 
 /**
  * Find translation keys that exist in the reference locale but are missing in other locales.
@@ -204,8 +416,10 @@ export async function getMissingTranslations(opts: {
   referenceLocale?: string
   targetLocales?: string[]
   locales?: string[]
+  limit?: number
+  offset?: number
   projectDir?: string
-}): Promise<MissingTranslationsResult> {
+}): Promise<MissingTranslationsPage> {
   const { layer } = opts
   const dir = opts.projectDir ?? process.cwd()
   const config = await detectI18nConfig(dir)
@@ -257,14 +471,30 @@ export async function getMissingTranslations(opts: {
     }
   }
 
+  const flat: Array<{ locale: string, layer: string, key: string }> = []
+  for (const [locale, byLayer] of Object.entries(result)) {
+    for (const [scanned, keys] of Object.entries(byLayer)) {
+      for (const key of keys) flat.push({ locale, layer: scanned, key })
+    }
+  }
+  const { page, ...paging } = paginate(flat, opts)
+
+  const missing: Record<string, Record<string, string[]>> = {}
+  for (const entry of page) {
+    const byLayer = missing[entry.locale] ??= {}
+    const keys = byLayer[entry.layer] ??= []
+    keys.push(entry.key)
+  }
+
   return {
-    missing: result,
+    missing,
     summary: {
       referenceLocale: localeRefInfo(refLocale),
       targetLocales: targets.map(localeRefInfo),
       layersScanned: layersToScan.map(d => d.layer),
       totalMissingKeys: totalMissing,
     },
+    ...paging,
   }
 }
 
@@ -457,6 +687,12 @@ function groupMatchesByKey(
 }
 
 /**
+ * The rows a search returns, capped. `totalMatches` counts every match the
+ * project holds, whatever the cap let through.
+ */
+export interface SearchTranslationsPage extends SearchTranslationsResult, PagedResult {}
+
+/**
  * Search translation files by key path or value.
  *
  * Returns one row per key. The detail rows — one per key and locale — are what
@@ -469,8 +705,10 @@ export async function searchTranslations(opts: {
   includeLocales?: boolean
   layer?: string
   locale?: string
+  limit?: number
+  offset?: number
   projectDir?: string
-}): Promise<SearchTranslationsResult> {
+}): Promise<SearchTranslationsPage> {
   const { query, layer, locale } = opts
   const dir = opts.projectDir ?? process.cwd()
   const config = await detectI18nConfig(dir)
@@ -548,11 +786,14 @@ export async function searchTranslations(opts: {
   }
 
   if (opts.includeLocales) {
-    return { matches, totalMatches: matches.length }
+    const detail = paginate(matches, opts)
+    const { page, ...detailPaging } = detail
+    return { matches: page, totalMatches: matches.length, ...detailPaging }
   }
 
   const grouped = groupMatchesByKey(matches, sheets, referenceLocale?.code ?? config.defaultLocale)
-  return { matches: grouped, totalMatches: grouped.length }
+  const { page, ...paging } = paginate(grouped, opts)
+  return { matches: page, totalMatches: grouped.length, ...paging }
 }
 
 // ─── list_namespaces ────────────────────────────────────────────
@@ -562,8 +803,13 @@ export interface NamespaceNode {
   children?: Record<string, NamespaceNode>
 }
 
-export interface ListNamespacesResult {
+export interface ListNamespacesResult extends PagedResult {
   layers: Record<string, { namespaces: Record<string, NamespaceNode> }>
+  /**
+   * Top-level namespace nodes across every scanned layer, before the cap. The
+   * unit the cap counts is one such node — a namespace brings its whole subtree.
+   */
+  totalNamespaces: number
 }
 
 /**
@@ -573,6 +819,8 @@ export interface ListNamespacesResult {
 export async function listNamespaces(opts: {
   layer?: string
   locale?: string
+  limit?: number
+  offset?: number
   projectDir?: string
 }): Promise<ListNamespacesResult> {
   const dir = opts.projectDir ?? process.cwd()
@@ -629,7 +877,20 @@ export async function listNamespaces(opts: {
     layers[ld.layer] = { namespaces: root.children ?? {} }
   }
 
-  return { layers }
+  const nodes: Array<{ layer: string, namespace: string, node: NamespaceNode }> = []
+  for (const [layer, entry] of Object.entries(layers)) {
+    for (const [namespace, node] of Object.entries(entry.namespaces)) {
+      nodes.push({ layer, namespace, node })
+    }
+  }
+  const { page, ...paging } = paginate(nodes, opts)
+
+  const paged: Record<string, { namespaces: Record<string, NamespaceNode> }> = {}
+  for (const entry of page) {
+    (paged[entry.layer] ??= { namespaces: {} }).namespaces[entry.namespace] = entry.node
+  }
+
+  return { layers: paged, totalNamespaces: nodes.length, ...paging }
 }
 
 function propagateCounts(node: NamespaceNode): number {

@@ -12,7 +12,7 @@ import { registerDetectorMock, registerFixtureConfig, playgroundDir, appAdminDir
 registerDetectorMock()
 
 const { detectI18nConfig, clearConfigCache } = await import('../../src/config/detector.js')
-const { searchTranslations } = await import('../../src/core/operations.js')
+const { searchTranslations, getMissingTranslations } = await import('../../src/core/operations.js')
 
 describe('get_missing_translations logic', () => {
   describe('app-admin', () => {
@@ -567,5 +567,167 @@ describe('find_empty_translations logic', () => {
 
       expect(emptyKeys).toHaveLength(0)
     })
+  })
+})
+
+/**
+ * Two layers whose German file lags behind the English one, in a project with
+ * enough missing keys to cap: what a caller reads a window of.
+ */
+async function makePagingProject(): Promise<string> {
+  const dir = await mkdtemp(join(tmpdir(), 'i18n-paging-'))
+  const rootLocales = join(dir, 'i18n', 'locales')
+  const shopLocales = join(dir, 'app-shop', 'i18n', 'locales')
+  await mkdir(rootLocales, { recursive: true })
+  await mkdir(shopLocales, { recursive: true })
+
+  await writeFile(join(rootLocales, 'en.json'), JSON.stringify({
+    common: { actions: { save: 'Save', cancel: 'Cancel', close: 'Close' } },
+  }))
+  await writeFile(join(rootLocales, 'de.json'), JSON.stringify({
+    common: { actions: { save: 'Speichern' } },
+  }))
+  await writeFile(join(shopLocales, 'en.json'), JSON.stringify({
+    shop: { checkout: 'Checkout', basket: 'Basket' },
+  }))
+  await writeFile(join(shopLocales, 'de.json'), '{}')
+
+  registerFixtureConfig(dir, {
+    rootDir: dir,
+    defaultLocale: 'en',
+    fallbackLocale: { default: ['en'] },
+    locales: [
+      { code: 'en', language: 'en-US', file: 'en.json' },
+      { code: 'de', language: 'de-DE', file: 'de.json' },
+    ],
+    localeDirs: [
+      { path: rootLocales, layer: 'root', layerRootDir: dir },
+      { path: shopLocales, layer: 'app-shop', layerRootDir: join(dir, 'app-shop') },
+    ],
+    layerRootDirs: [dir, join(dir, 'app-shop')],
+    apps: [{ name: 'app-shop', rootDir: join(dir, 'app-shop'), layers: ['app-shop', 'root'] }],
+  })
+  return dir
+}
+
+/**
+ * The cap both reads gained. An agent used to pay for every row a query
+ * matched — 289 KB for one substring — with nothing to ask for less.
+ */
+describe('limit and offset on the unbounded reads', () => {
+  let pagingDir: string
+
+  beforeAll(async () => {
+    pagingDir = await makePagingProject()
+  })
+
+  afterAll(async () => {
+    await rm(pagingDir, { recursive: true, force: true })
+    clearConfigCache()
+  })
+
+  it('returns the whole answer when no limit is given', async () => {
+    const result = await searchTranslations({ projectDir: pagingDir, query: 'common', searchIn: 'keys' })
+
+    expect(result.matches).toHaveLength(3)
+    expect(result.truncated).toBe(false)
+    expect(result).not.toHaveProperty('nextOffset')
+  })
+
+  it('caps search rows and says where the next page starts', async () => {
+    const result = await searchTranslations({
+      projectDir: pagingDir,
+      query: 'common',
+      searchIn: 'keys',
+      limit: 2,
+    })
+
+    expect(result.matches).toHaveLength(2)
+    expect(result.truncated).toBe(true)
+    expect(result.nextOffset).toBe(2)
+  })
+
+  it('counts every match in totalMatches, whatever the limit let through', async () => {
+    const full = await searchTranslations({ projectDir: pagingDir, query: 'common', searchIn: 'keys' })
+    const capped = await searchTranslations({
+      projectDir: pagingDir,
+      query: 'common',
+      searchIn: 'keys',
+      limit: 1,
+    })
+
+    expect(capped.totalMatches).toBe(full.totalMatches)
+    expect(capped.matches).toHaveLength(1)
+  })
+
+  it('continues a truncated search from nextOffset without repeating a row', async () => {
+    const first = await searchTranslations({
+      projectDir: pagingDir,
+      query: 'common',
+      searchIn: 'keys',
+      limit: 2,
+    })
+    const second = await searchTranslations({
+      projectDir: pagingDir,
+      query: 'common',
+      searchIn: 'keys',
+      limit: 2,
+      offset: first.nextOffset,
+    })
+
+    expect(second.matches).toHaveLength(1)
+    expect(second.truncated).toBe(false)
+
+    const keys = [...first.matches, ...second.matches].map(match => match.key)
+    expect(new Set(keys).size).toBe(3)
+  })
+
+  it('caps the per-locale rows too, when includeLocales asks for them', async () => {
+    const result = await searchTranslations({
+      projectDir: pagingDir,
+      query: 'common',
+      searchIn: 'keys',
+      includeLocales: true,
+      limit: 2,
+    })
+
+    expect(result.matches).toHaveLength(2)
+    expect(result.totalMatches).toBe(4)
+    expect(result.nextOffset).toBe(2)
+  })
+
+  it('caps missing keys over the flattened locale/layer/key list', async () => {
+    const full = await getMissingTranslations({ projectDir: pagingDir })
+    expect(full.summary.totalMissingKeys).toBe(4)
+    expect(full.truncated).toBe(false)
+
+    const capped = await getMissingTranslations({ projectDir: pagingDir, limit: 2 })
+    const listed = Object.values(capped.missing)
+      .flatMap(byLayer => Object.values(byLayer))
+      .flat()
+
+    expect(listed).toHaveLength(2)
+    expect(capped.truncated).toBe(true)
+    expect(capped.nextOffset).toBe(2)
+  })
+
+  it('leaves totalMissingKeys the count for the whole project', async () => {
+    const capped = await getMissingTranslations({ projectDir: pagingDir, limit: 1 })
+
+    expect(capped.summary.totalMissingKeys).toBe(4)
+    expect(capped.summary.layersScanned).toEqual(['root', 'app-shop'])
+  })
+
+  it('continues a truncated missing read from nextOffset', async () => {
+    const first = await getMissingTranslations({ projectDir: pagingDir, limit: 3 })
+    const second = await getMissingTranslations({ projectDir: pagingDir, offset: first.nextOffset })
+
+    const keysOf = (result: Awaited<ReturnType<typeof getMissingTranslations>>) =>
+      Object.entries(result.missing).flatMap(([locale, byLayer]) =>
+        Object.entries(byLayer).flatMap(([layer, keys]) => keys.map(key => `${locale}/${layer}/${key}`)))
+
+    expect(keysOf(second)).toHaveLength(1)
+    expect(second.truncated).toBe(false)
+    expect(new Set([...keysOf(first), ...keysOf(second)]).size).toBe(4)
   })
 })

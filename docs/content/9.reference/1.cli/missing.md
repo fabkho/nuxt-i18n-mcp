@@ -22,6 +22,8 @@ the-i18n-cli missing
 | `--layer` | `string` | no | — | Layer name to scope this to (e.g., "root", "app-admin"). If omitted, every layer is included. Call discover to list the layers. |
 | `--referenceLocale`, `--ref` | `string` | no | — | Locale code used as the source of truth (e.g., "en", "en-US"). Defaults to the project default locale. |
 | `--targetLocales`, `--targets` | `string` | no | — | Locale codes to check for missing keys (e.g., ["de", "fr", "es"]). Defaults to all locales except the reference. Comma-separated. |
+| `--limit` | `string` | no | — | Maximum number of missing keys to return. Default: 100 for a tool call, unlimited at a terminal. When the cap applies the result carries truncated: true and nextOffset — call again with offset set to that value for the next page, or narrow the request instead. |
+| `--offset` | `string` | no | — | Number of missing keys to skip before returning any. Default: 0. Pass the nextOffset of a truncated result to continue where it stopped. |
 | `--outputFile` | `string` | no | — | Absolute path to write the full JSON output to. Only a compact summary is returned to the caller, which is what you want for a result too large to read in one piece. Example: ".i18n-reports/missing-translations.json" |
 | `--codequalityOutput` | `string` | no | — | Also write the missing translations as a GitLab Code Quality (CodeClimate) JSON report to this file path. |
 | `--failOnMissing` | `boolean` | no | `false` | Exit 2 when any key is missing (CI gate). |

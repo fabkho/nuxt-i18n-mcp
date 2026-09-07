@@ -17,4 +17,6 @@ the-i18n-cli discover
 
 ## Flags
 
-`discover` declares no flags of its own.
+| Flag | Type | Required | Default | Description |
+| --- | --- | --- | --- | --- |
+| `--includeTranslationGuidance` | `boolean` | no | `true` | Keep the translation prose in projectConfig — glossary, translationPrompt, localeNotes, examples and context. Default: true at a terminal, false for a tool call, which omits those five fields and sets projectConfig.translationGuidanceOmitted instead. Every structural field (layerRules, protectedLocales, declaredNamespaces, orphanScan, translationMemory) is returned either way. |

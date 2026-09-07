@@ -354,6 +354,32 @@ describe('the-i18n-mcp server over in-memory transport', () => {
     }
   })
 
+  // The prompts assemble this same text into the instructions they hand a
+  // host, so discover repeating it spent context on something the caller has.
+  it('discover leaves the translation prose out of projectConfig unless asked for it', async () => {
+    const dir = await makeProject({
+      glossary: { Buchung: 'booking' },
+      translationPrompt: 'Address the reader formally.',
+      layerRules: [{ layer: 'root', description: 'shared', when: 'used by two apps' }],
+    })
+    try {
+      const { json } = await callTool('discover', { projectDir: dir })
+
+      expect(json?.projectConfig?.glossary).toBeUndefined()
+      expect(json?.projectConfig?.translationPrompt).toBeUndefined()
+      expect(json?.projectConfig?.translationGuidanceOmitted).toBe(true)
+      // The structural half is what an agent decides with, and it stays.
+      expect(json?.projectConfig?.layerRules).toHaveLength(1)
+
+      const full = await callTool('discover', { projectDir: dir, includeTranslationGuidance: true })
+
+      expect(full.json?.projectConfig?.glossary).toEqual({ Buchung: 'booking' })
+      expect(full.json?.projectConfig?.translationGuidanceOmitted).toBeUndefined()
+    } finally {
+      await rm(dir, { recursive: true, force: true })
+    }
+  })
+
   it('translate_missing without a translation backend returns fallback contexts', async () => {
     const { json, result } = await callTool('translate_missing', { layer: 'root', projectDir })
 
@@ -465,6 +491,27 @@ describe('the-i18n-mcp server over in-memory transport', () => {
     expect(json?.summary.locale).toBe('de')
     expect(json?.summary.message).toBeDefined()
     expect(json?.guidance).toBeDefined()
+  })
+
+  // An unbounded read used to be answerable only in full: one query returning
+  // 289 KB of rows, with nothing a caller could pass to ask for less.
+  it('search_translations caps its rows at limit and says how to continue', async () => {
+    const { json } = await callTool('search_translations', { projectDir, query: 'a', limit: 2 })
+
+    expect(json?.matches).toHaveLength(2)
+    expect(json?.truncated).toBe(true)
+    expect(json?.nextOffset).toBe(2)
+    // totalMatches is the finding, not the window.
+    expect(json?.totalMatches).toBeGreaterThan(2)
+    expect(json?.message).toContain('offset=2')
+
+    const { json: next } = await callTool('search_translations', {
+      projectDir,
+      query: 'a',
+      offset: json?.nextOffset as number,
+    })
+    expect(next?.truncated).toBe(false)
+    expect(next?.message).toBeUndefined()
   })
 
   it('find_undefined_keys returns a clean result for a project without code usage', async () => {

@@ -35,6 +35,19 @@ export {
   listNamespaces,
 } from './ops-read.js'
 
+export type {
+  DescribeProjectOutcome,
+  GetTranslationsByLayer,
+  GetTranslationsOutcome,
+  GetTranslationsResult,
+  ListNamespacesResult,
+  MissingTranslationsPage,
+  NamespaceNode,
+  PagedResult,
+  SearchTranslationsPage,
+  TrimmedProjectConfig,
+} from './ops-read.js'
+
 export {
   writeTranslations,
   removeTranslations,

@@ -27,12 +27,12 @@ import {
 // so the core barrel is still not loaded to print usage text.
 import type { CheckUndefinedKeysResult } from '../core/ops-check.js'
 import type { FindDuplicateKeysResult } from '../core/ops-duplicates.js'
+import type { SearchTranslationsPage } from '../core/ops-read.js'
 import type {
   CodeUsageResult,
   FindOrphanKeysResult,
   MissingTranslationsResult,
   RemoveOrphanKeysResult,
-  SearchTranslationsResult,
   TranslationStatusResult,
 } from '../core/types.js'
 // The result schemas. Imported outright, like the report mappings above: they
@@ -59,7 +59,7 @@ import {
   writeTranslationsResult,
 } from './results.js'
 import { defineOperation } from './types.js'
-import type { AnyOperationDescriptor, ParamSpec, Params } from './types.js'
+import type { AnyOperationDescriptor, OperationContext, ParamSpec, Params } from './types.js'
 import {
   applyTranslateKeyGuidance,
   applyTranslateMissingGuidance,
@@ -102,6 +102,49 @@ const dryRun = (description: string) => ({
   default: false,
   description,
 } as const satisfies ParamSpec)
+
+/**
+ * The row cap a tool call gets when it names none.
+ *
+ * The one default the two surfaces disagree on, and it cannot be declared on
+ * the spec: `default` is the CLI's, and "unlimited" has no numeric spelling.
+ * A terminal answer is piped into jq, so it stays unbounded; a tool result is
+ * spent from a context window, so it is capped unless the caller says
+ * otherwise — one substring search over a project of 8.6k keys and 30 locales
+ * answers with 289 KB, which no caller asked to read.
+ */
+const MCP_DEFAULT_LIMIT = 100
+
+/**
+ * The two parameters every unbounded read takes. `unit` is what that read
+ * counts in; where the unit needs a rule of its own — a nested map flattened,
+ * a key counted once per layer — the operation states it in its longDescription.
+ */
+const paging = (unit: string) => ({
+  limit: {
+    type: 'number',
+    integer: true,
+    min: 1,
+    description: `Maximum number of ${unit} to return. Default: ${MCP_DEFAULT_LIMIT} for a tool call, unlimited at a terminal. When the cap applies the result carries truncated: true and nextOffset — call again with offset set to that value for the next page, or narrow the request instead.`,
+  },
+  offset: {
+    type: 'number',
+    integer: true,
+    min: 0,
+    description: `Number of ${unit} to skip before returning any. Default: 0. Pass the nextOffset of a truncated result to continue where it stopped.`,
+  },
+} as const satisfies Params)
+
+/** The window one run reads in: the caller's, or the surface's default. */
+function pageArgs(
+  args: { limit?: number, offset?: number },
+  ctx: OperationContext,
+): { limit?: number, offset?: number } {
+  return {
+    limit: args.limit ?? (ctx.surface === 'mcp' ? MCP_DEFAULT_LIMIT : undefined),
+    offset: args.offset,
+  }
+}
 
 const scanDirs = {
   type: 'string[]',
@@ -194,11 +237,22 @@ export const descriptors: readonly AnyOperationDescriptor[] = [
     },
     description: 'Describe the project: detected config, locale directories per layer with file counts and top-level namespaces, the layer graph, and the hand-maintained locales.',
     longDescription: 'Call this first to understand the project before reading or writing translations. The result also names the active translation mode ("provider" when the server has an env-configured LLM provider, "agent" otherwise). layerGraph answers where a new key belongs: a key used by more than one app belongs in a layer those apps share, and layerGraph.shared names those layers.',
-    params: {},
     result: discoverResult,
+    params: {
+      includeTranslationGuidance: {
+        type: 'boolean',
+        // A terminal reads the config to check it; an agent reads it to decide
+        // where a key goes, and gets the same prose again from the prompts.
+        default: true,
+        description: 'Keep the translation prose in projectConfig — glossary, translationPrompt, localeNotes, examples and context. Default: true at a terminal, false for a tool call, which omits those five fields and sets projectConfig.translationGuidanceOmitted instead. Every structural field (layerRules, protectedLocales, declaredNamespaces, orphanScan, translationMemory) is returned either way.',
+      },
+    },
     async run(args) {
       const { describeProject } = await core()
-      return describeProject({ projectDir: args.projectDir })
+      return describeProject({
+        projectDir: args.projectDir,
+        includeTranslationGuidance: args.includeTranslationGuidance,
+      })
     },
   }),
 
@@ -214,18 +268,24 @@ export const descriptors: readonly AnyOperationDescriptor[] = [
       annotations: { readOnlyHint: true, openWorldHint: false },
     },
     description: 'List the translation key tree grouped by namespace prefix, with a count per namespace node.',
-    longDescription: 'Use this to explore the available keys without guessing path prefixes.',
+    longDescription: 'Use this to explore the available keys without guessing path prefixes. limit counts top-level namespace nodes across the scanned layers, each of which brings its whole subtree; totalNamespaces counts them all, whatever the limit let through.',
     params: {
       layer: {
         ...layerFilter,
         description: 'Layer name to filter by (e.g., "root", "app-admin"). If omitted or "*", scans all layers. Call discover to list the layers.',
       },
       locale: readLocale,
+      ...paging('top-level namespaces'),
     },
     result: listNamespacesResult,
-    async run(args) {
+    async run(args, ctx) {
       const { listNamespaces } = await core()
-      return listNamespaces({ layer: args.layer, locale: args.locale, projectDir: args.projectDir })
+      return listNamespaces({
+        layer: args.layer,
+        locale: args.locale,
+        ...pageArgs(args, ctx),
+        projectDir: args.projectDir,
+      })
     },
   }),
 
@@ -237,9 +297,13 @@ export const descriptors: readonly AnyOperationDescriptor[] = [
       title: 'Get Translations',
       annotations: { readOnlyHint: true, openWorldHint: false },
     },
-    description: 'Get translation values for given key paths from a specific locale and layer. Use "*" as the locale to read from all locales.',
+    description: 'Get translation values by key path or by key prefix, from one layer or from every layer that defines them. Use "*" as the locale to read from all locales.',
+    longDescription: 'Pass keys for an explicit list, or keyPrefix to read a whole namespace at once — one of the two is required, and a call with neither fails with EARG. With layer, the result is locale → key → value, exactly as it always was. Without layer, every non-alias layer is read and the result is { byLayer, layersSearched }: byLayer holds that same shape per layer and names only the layers defining at least one of the keys, which is what answers where a key lives. limit counts one key per layer read, so a prefix read of seven layers is capped across all of them rather than per layer.',
     params: {
-      layer: layerRequired,
+      layer: {
+        ...layerFilter,
+        description: 'Layer name from discover (e.g., "root", "app-admin"). Omit to read every layer and get the { byLayer } shape back.',
+      },
       locale: {
         type: 'string',
         required: true,
@@ -247,8 +311,11 @@ export const descriptors: readonly AnyOperationDescriptor[] = [
       },
       keys: {
         type: 'string[]',
-        required: true,
-        description: 'Dot-separated key paths to read. Example: ["common.actions.save", "auth.login.title"].',
+        description: 'Dot-separated key paths to read. Example: ["common.actions.save", "auth.login.title"]. Either this or keyPrefix is required.',
+      },
+      keyPrefix: {
+        type: 'string',
+        description: 'Namespace to read every leaf key under, dots included: "auth" reads auth.login.title and everything else below auth. Either this or keys is required; passing both reads the union.',
       },
       compact: {
         type: 'boolean',
@@ -257,15 +324,18 @@ export const descriptors: readonly AnyOperationDescriptor[] = [
         // pipes into jq, which is where they would trim it.
         cli: { hidden: true },
       },
+      ...paging('keys'),
     },
     result: getTranslationsResult,
-    async run(args) {
+    async run(args, ctx) {
       const { getTranslations } = await core()
       return getTranslations({
         layer: args.layer,
         locale: args.locale,
         keys: args.keys,
+        keyPrefix: args.keyPrefix,
         compact: args.compact,
+        ...pageArgs(args, ctx),
         projectDir: args.projectDir,
       })
     },
@@ -320,6 +390,7 @@ export const descriptors: readonly AnyOperationDescriptor[] = [
       annotations: { readOnlyHint: true, openWorldHint: false },
     },
     description: 'Find translation keys that exist in the reference locale but are missing in other locales. Scans a specific layer or all layers.',
+    longDescription: 'summary.totalMissingKeys counts every missing key in the project; limit caps only how many of them are listed under missing, over the nested map flattened to one entry per locale, layer and key.',
     params: {
       layer: layerFilter,
       referenceLocale,
@@ -329,6 +400,7 @@ export const descriptors: readonly AnyOperationDescriptor[] = [
         // `--targets` was the CLI spelling before the two surfaces agreed.
         cli: { alias: 'targets' },
       },
+      ...paging('missing keys'),
       failOnMissing: {
         type: 'boolean',
         default: false,
@@ -352,12 +424,13 @@ export const descriptors: readonly AnyOperationDescriptor[] = [
         }),
       },
     },
-    async run(args) {
+    async run(args, ctx) {
       const { getMissingTranslations } = await core()
       return getMissingTranslations({
         layer: args.layer,
         referenceLocale: args.referenceLocale,
         targetLocales: args.targetLocales,
+        ...pageArgs(args, ctx),
         projectDir: args.projectDir,
       })
     },
@@ -372,7 +445,7 @@ export const descriptors: readonly AnyOperationDescriptor[] = [
       annotations: { readOnlyHint: true, openWorldHint: false },
     },
     description: 'Translation coverage in one call: per-locale and per-layer counts of total, translated, missing and empty keys, plus an overall completion percentage.',
-    longDescription: 'Use this instead of calling get_missing_translations per layer and counting keys yourself. Empty-string values count as untranslated; set listEmpty to get the keys behind that count — they exist in the locale file, so they are never reported as missing, and they render as nothing in the UI. Locales listed in protectedLocales are reported but excluded from the overall figure, since they are maintained by hand.',
+    longDescription: 'Use this instead of calling get_missing_translations per layer and counting keys yourself. Empty-string values count as untranslated; set listEmpty to get the keys behind that count — they exist in the locale file, so they are never reported as missing, and they render as nothing in the UI. Locales listed in protectedLocales are reported but excluded from the overall figure, since they are maintained by hand. Where a translation memory lockfile exists, each locale and layer also carries stale — keys whose target was written from source text that has changed since — and the summary carries staleCount; translate with overwriteStale refreshes them.',
     params: {
       layer: layerFilter,
       referenceLocale,
@@ -463,6 +536,7 @@ export const descriptors: readonly AnyOperationDescriptor[] = [
         default: false,
         description: 'Return one row per key and locale — layer, locale, key, value — instead of one row per key. Several times the output for the same findings, so ask for it when the per-locale values are what you are after. Default: false.',
       },
+      ...paging('matching rows'),
     },
     result: searchTranslationsResult,
     report: {
@@ -474,11 +548,16 @@ export const descriptors: readonly AnyOperationDescriptor[] = [
         cli: { hidden: true },
       },
       // The one operation whose result carries no summary of its own: the match
-      // count is what is left of it once the matches are on disk.
-      summary: (result: SearchTranslationsResult) => ({ totalMatches: result.totalMatches }),
+      // count is what is left of it once the matches are on disk. A cap that
+      // applied comes with it — a diverted search must not be trimmed in
+      // silence — while an uncapped one stays the summary it always was.
+      summary: (result: SearchTranslationsPage) => ({
+        totalMatches: result.totalMatches,
+        ...(result.truncated ? { truncated: true, nextOffset: result.nextOffset } : {}),
+      }),
       summarySchema: searchReportSummary,
     },
-    async run(args) {
+    async run(args, ctx) {
       const { searchTranslations } = await core()
       return searchTranslations({
         query: args.query,
@@ -487,6 +566,7 @@ export const descriptors: readonly AnyOperationDescriptor[] = [
         includeLocales: args.includeLocales,
         layer: args.layer,
         locale: args.locale,
+        ...pageArgs(args, ctx),
         projectDir: args.projectDir,
       })
     },
@@ -609,7 +689,7 @@ export const descriptors: readonly AnyOperationDescriptor[] = [
       overwriteStale: {
         type: 'boolean',
         default: false,
-        description: 'Also re-translate keys whose target value was written from source text that has changed since. Requires translationMemory in the project config — without it nothing is known to be stale and this changes nothing. Default: false, which reports those keys under "stale" and leaves their values alone.',
+        description: 'Also re-translate keys whose target value was written from source text that has changed since. Needs the translation memory, which is on unless translationMemory is false in the project config — without it nothing is known to be stale and this changes nothing. Default: false, which reports those keys under "stale" and leaves their values alone.',
       },
       dryRun: dryRun('Return which keys would be translated without calling the provider or writing files. Default: false.'),
       compact: {

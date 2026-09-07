@@ -35,6 +35,16 @@ export type {
   UncertainKeyFinding,
   CheckUndefinedKeysResult,
   CheckUndefinedKeysSummary,
+  DescribeProjectOutcome,
+  GetTranslationsByLayer,
+  GetTranslationsOutcome,
+  GetTranslationsResult,
+  ListNamespacesResult,
+  MissingTranslationsPage,
+  NamespaceNode,
+  PagedResult,
+  SearchTranslationsPage,
+  TrimmedProjectConfig,
 } from './core/operations.js'
 
 // The operation table both surfaces are built from. The MCP server registers

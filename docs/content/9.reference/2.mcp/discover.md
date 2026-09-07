@@ -13,6 +13,7 @@ Describe the project: detected config, locale directories per layer with file co
 
 | Parameter | Type | Required | Description |
 | --- | --- | --- | --- |
+| `includeTranslationGuidance` | `boolean` | no | Keep the translation prose in projectConfig — glossary, translationPrompt, localeNotes, examples and context. Default: true at a terminal, false for a tool call, which omits those five fields and sets projectConfig.translationGuidanceOmitted instead. Every structural field (layerRules, protectedLocales, declaredNamespaces, orphanScan, translationMemory) is returned either way. |
 | `projectDir` | `string` | no | Absolute path to the project root. Defaults to I18N_PROJECT_DIR, then server cwd. Example: "/home/user/my-app". |
 
 ## Behavior Hints

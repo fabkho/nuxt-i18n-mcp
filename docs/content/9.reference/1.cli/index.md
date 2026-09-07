@@ -17,7 +17,7 @@ Every command `@the-i18n-kit/cli` registers is listed below and documented on it
 | --- | --- |
 | [`init`](/reference/cli/init) | Create a schema-valid .i18n-mcp.json from framework detection. Non-interactive; refuses to overwrite without force. |
 | [`discover`](/reference/cli/discover) | Describe the project: detected config, locale directories per layer with file counts and top-level namespaces, the layer graph, and the hand-maintained locales. |
-| [`get`](/reference/cli/get) | Get translation values for given key paths from a specific locale and layer. Use "*" as the locale to read from all locales. |
+| [`get`](/reference/cli/get) | Get translation values by key path or by key prefix, from one layer or from every layer that defines them. Use "*" as the locale to read from all locales. |
 | [`write`](/reference/cli/write) | Write translation key-value pairs to a layer. Keys are inserted in alphabetical order. |
 | [`missing`](/reference/cli/missing) | Find translation keys that exist in the reference locale but are missing in other locales. Scans a specific layer or all layers. |
 | [`status`](/reference/cli/status) | Translation coverage in one call: per-locale and per-layer counts of total, translated, missing and empty keys, plus an overall completion percentage. |

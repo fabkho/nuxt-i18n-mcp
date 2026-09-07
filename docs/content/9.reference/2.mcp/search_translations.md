@@ -19,6 +19,8 @@ Search translation files by key path or value, one compact row per matching key 
 | `layer` | `string` | no | Layer name to search in (e.g., "root", "app-admin"), or "*" for all layers. If omitted, searches every layer. |
 | `locale` | `string` | no | Locale code to search in (e.g., "en", "de"). If omitted, searches every locale. |
 | `includeLocales` | `boolean` | no | Return one row per key and locale — layer, locale, key, value — instead of one row per key. Several times the output for the same findings, so ask for it when the per-locale values are what you are after. Default: false. |
+| `limit` | `integer` | no | Maximum number of matching rows to return. Default: 100 for a tool call, unlimited at a terminal. When the cap applies the result carries truncated: true and nextOffset — call again with offset set to that value for the next page, or narrow the request instead. |
+| `offset` | `integer` | no | Number of matching rows to skip before returning any. Default: 0. Pass the nextOffset of a truncated result to continue where it stopped. |
 | `outputFile` | `string` | no | Absolute path to write the full JSON output to. Only a compact summary is returned to the caller, which is what you want for a result too large to read in one piece. Example: ".i18n-reports/search-results.json" |
 | `projectDir` | `string` | no | Absolute path to the project root. Defaults to I18N_PROJECT_DIR, then server cwd. Example: "/home/user/my-app". |
 

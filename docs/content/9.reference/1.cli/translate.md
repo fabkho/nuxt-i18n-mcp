@@ -24,7 +24,7 @@ the-i18n-cli translate
 | `--targetLocales`, `--targets` | `string` | no | — | Locale codes to translate into (e.g., ["de", "fr", "sv"]). Defaults to all locales except the reference. Comma-separated. |
 | `--keys` | `string` | no | — | Dot-path keys to translate (e.g., ["auth.login.title", "common.save"]). If omitted, translates every missing key in the layer. Comma-separated. |
 | `--batchSize` | `string` | no | — | Maximum number of keys per provider request. Default: 50. A lower value reduces per-batch risk and increases round trips. |
-| `--overwriteStale` | `boolean` | no | `false` | Also re-translate keys whose target value was written from source text that has changed since. Requires translationMemory in the project config — without it nothing is known to be stale and this changes nothing. Default: false, which reports those keys under "stale" and leaves their values alone. |
+| `--overwriteStale` | `boolean` | no | `false` | Also re-translate keys whose target value was written from source text that has changed since. Needs the translation memory, which is on unless translationMemory is false in the project config — without it nothing is known to be stale and this changes nothing. Default: false, which reports those keys under "stale" and leaves their values alone. |
 | `--dryRun` | `boolean` | no | `false` | Return which keys would be translated without calling the provider or writing files. Default: false. |
 | `--provider=<openai\|anthropic\|google>` | `string` | no | — | LLM provider to translate through. Without one nothing is translated automatically — the result carries the contexts to translate by hand instead. |
 | `--model` | `string` | no | — | Model name. Required whenever a provider is set. |

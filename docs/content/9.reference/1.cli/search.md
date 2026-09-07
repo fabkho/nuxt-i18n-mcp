@@ -25,3 +25,5 @@ the-i18n-cli search --query <query>
 | `--layer` | `string` | no | — | Layer name to search in (e.g., "root", "app-admin"), or "*" for all layers. If omitted, searches every layer. |
 | `--locale` | `string` | no | — | Locale code to search in (e.g., "en", "de"). If omitted, searches every locale. |
 | `--includeLocales` | `boolean` | no | `false` | Return one row per key and locale — layer, locale, key, value — instead of one row per key. Several times the output for the same findings, so ask for it when the per-locale values are what you are after. Default: false. |
+| `--limit` | `string` | no | — | Maximum number of matching rows to return. Default: 100 for a tool call, unlimited at a terminal. When the cap applies the result carries truncated: true and nextOffset — call again with offset set to that value for the next page, or narrow the request instead. |
+| `--offset` | `string` | no | — | Number of matching rows to skip before returning any. Default: 0. Pass the nextOffset of a truncated result to continue where it stopped. |
