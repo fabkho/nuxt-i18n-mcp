@@ -35,7 +35,7 @@ import type {
 import { findWritableLayerOrThrow, findReferenceLocaleOrThrow, findLocaleOrThrow, localeRefInfo } from '../shared.js'
 import { resolveTranslateTargets, collectProtectedLocaleResults, partitionTranslateKeyTargets } from './targets.js'
 import { validatePlaceholders, mergePlaceholderValidation, failReasonForIssue } from './placeholders.js'
-import { buildTranslationSystemPrompt, buildTranslationUserMessage, buildFallbackContext } from './prompts.js'
+import { buildTranslationSystemPrompt, buildTranslationUserMessage, buildFallbackContext, warnUnmatchedLocaleNotes } from './prompts.js'
 import { extractJsonFromResponse } from './json-salvage.js'
 import { openTranslationMemory } from './memory.js'
 import { requestWithRetry } from './retry.js'
@@ -79,6 +79,7 @@ export async function translateMissing(opts: TranslateMissingOptions): Promise<T
   }
 
   findWritableLayerOrThrow(config, layer)
+  warnUnmatchedLocaleNotes(config)
 
   const refCode = opts.referenceLocale ?? config.defaultLocale
   const refLocale = findReferenceLocaleOrThrow(config, opts.referenceLocale)
@@ -224,7 +225,7 @@ export async function translateMissing(opts: TranslateMissingOptions): Promise<T
         const batchNum = Math.floor(i / maxBatch) + 1
         const batch = Object.fromEntries(keyEntries.slice(i, i + maxBatch))
 
-        const systemPrompt = buildTranslationSystemPrompt(config.projectConfig, target.language || target.code, config.localeFileFormat)
+        const systemPrompt = buildTranslationSystemPrompt(config.projectConfig, target, config.localeFileFormat)
         const userMessage = buildTranslationUserMessage(
           refLocale!.language || refLocale!.code,
           target.language || target.code,
@@ -240,10 +241,10 @@ export async function translateMissing(opts: TranslateMissingOptions): Promise<T
             truncationHint: 'Reduce batchSize.',
             logModel: true,
             runState,
-            parse: (text) => {
+            parse: (text, truncated) => {
               // Keys the model invented are dropped here; keys it omitted are
               // accounted for below.
-              const parsed = extractJsonFromResponse(text)
+              const parsed = extractJsonFromResponse(text, { truncated })
               const batchKeys = new Set(Object.keys(batch))
               const batchTranslations: Record<string, string> = {}
               for (const [key, value] of Object.entries(parsed)) {
@@ -256,8 +257,11 @@ export async function translateMissing(opts: TranslateMissingOptions): Promise<T
           },
         )
         model = outcome.model ?? model
-        const batchTranslations = outcome.status === 'ok' ? outcome.value : null
-        const batchTruncated = outcome.status === 'truncated'
+        // A cut-off batch still carries the pairs that arrived ('partial'), so
+        // its keys are read exactly like a complete batch's; the ones it does
+        // not carry were lost to the cut rather than passed over by the model.
+        const batchTranslations = outcome.status === 'ok' || outcome.status === 'partial' ? outcome.value : null
+        const batchTruncated = outcome.status === 'truncated' || outcome.status === 'partial'
 
         // Account for every batch key: translated, omitted by the model,
         // or lost to a failed batch — totals must always reconcile.
@@ -335,8 +339,8 @@ export async function translateMissing(opts: TranslateMissingOptions): Promise<T
       // Agent mode: return context for the host agent to translate inline
       const fallbackContext = buildFallbackContext(
         config.projectConfig,
-        refLocale!.language || refLocale!.code,
-        target.language || target.code,
+        refLocale!,
+        [target],
         keysAndValues,
       )
       await reportProgress(`Complete ${target.code}`)
@@ -560,6 +564,7 @@ export async function translateKey(opts: {
   const isDryRun = opts.dryRun ?? false
   const overwrite = opts.overwrite ?? true
   const sourceLocale = findLocaleOrThrow(config, opts.sourceLocale)
+  warnUnmatchedLocaleNotes(config)
   const usesDefaultTargets = opts.targetLocales === undefined || opts.targetLocales === 'all'
   const resolvedTargetLocales = opts.targetLocales === undefined || opts.targetLocales === 'all'
     ? config.locales
@@ -681,8 +686,8 @@ export async function translateKey(opts: {
       placeholderValidation: basePlaceholderValidation,
       fallbackContext: buildFallbackContext(
         config.projectConfig,
-        sourceLocale.language || sourceLocale.code,
-        targetsToTranslate.map(({ locale }) => locale.language || locale.code).join(', '),
+        sourceLocale,
+        targetsToTranslate.map(({ locale }) => locale),
         { [opts.key]: sourceValue },
       ),
       ...(opts.includePreview ? { preview } : {}),
@@ -694,7 +699,7 @@ export async function translateKey(opts: {
   let model: string | undefined
 
   for (const { locale } of targetsToTranslate) {
-    const systemPrompt = buildTranslationSystemPrompt(config.projectConfig, locale.language || locale.code, config.localeFileFormat)
+    const systemPrompt = buildTranslationSystemPrompt(config.projectConfig, locale, config.localeFileFormat)
     const userMessage = buildTranslationUserMessage(
       sourceLocale.language || sourceLocale.code,
       locale.language || locale.code,
@@ -707,19 +712,21 @@ export async function translateKey(opts: {
       { systemPrompt, userMessage, maxTokens: TRANSLATE_MAX_TOKENS },
       {
         label: locale.code,
-        parse: (text) => {
-          const parsedValue = extractJsonFromResponse(text)[opts.key]
+        parse: (text, truncated) => {
+          const parsedValue = extractJsonFromResponse(text, { truncated })[opts.key]
           return typeof parsedValue === 'string' ? parsedValue : undefined
         },
       },
     )
     model = outcome.model ?? model
-    const targetValue = outcome.status === 'ok' ? outcome.value : undefined
+    // One key per request: a truncated response that still carried it is worth
+    // as much as a complete one.
+    const targetValue = outcome.status === 'ok' || outcome.status === 'partial' ? outcome.value : undefined
 
     if (!targetValue) {
       failed.push({
         locale: locale.code,
-        reason: outcome.status === 'truncated'
+        reason: outcome.status === 'truncated' || outcome.status === 'partial'
           ? 'truncated'
           : outcome.status === 'failed' ? 'provider-error' : 'omitted-by-model',
       })

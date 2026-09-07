@@ -30,11 +30,14 @@ export interface TranslateRunState {
 
 export interface RequestContext<T> {
   /**
-   * Turn a complete response body into the caller's shape. Throwing counts as
-   * a failed attempt and is retried, so parse errors and transport errors
-   * share one retry budget.
+   * Turn a response body into the caller's shape. Throwing counts as a failed
+   * attempt and is retried, so parse errors and transport errors share one
+   * retry budget.
+   *
+   * `truncated` says the provider stopped at the token limit, which makes the
+   * tail of the body untrustworthy — a parser that salvages needs to know.
    */
-  parse: (responseText: string) => T
+  parse: (responseText: string, truncated: boolean) => T
   /** Identifies the request in warnings, e.g. `batch 2 in en` or `en`. */
   label: string
   /** Actionable advice appended to the truncation warning. */
@@ -47,11 +50,28 @@ export interface RequestContext<T> {
 /**
  * `failed` covers every attempt throwing as well as an abort observed before
  * a request went out; the caller maps it to its own fail reason.
+ *
+ * `partial` is a truncated response that still carried usable content: the
+ * value holds only what provably arrived, so the caller must account for
+ * everything it asked for and did not get back as cut off, not as omitted.
  */
 export type RequestOutcome<T>
   = | { status: 'ok', value: T, model?: string }
+    | { status: 'partial', value: T, model?: string }
     | { status: 'truncated', model?: string }
     | { status: 'failed', model?: string }
+
+/** Nothing survived the cut: nullish, or an object without a single entry. */
+function carriesNothing(value: unknown): boolean {
+  if (value === undefined || value === null) return true
+  if (typeof value === 'object') return Object.keys(value).length === 0
+  return false
+}
+
+/** How much a salvaged value recovered, for the truncation warning. */
+function recoveredCount(value: unknown): number {
+  return value !== null && typeof value === 'object' ? Object.keys(value).length : 1
+}
 
 /**
  * Issue one translate request, retrying once on failure. `model` reports the
@@ -79,17 +99,34 @@ export async function requestWithRetry<T>(
       if (ctx.logModel) log.info(`Translation model: ${response.model}`)
 
       if (response.truncated) {
-        // The response was cut off at the token limit — retrying with the
-        // same budget would truncate again, so fail fast.
+        // The response was cut off at the token limit — retrying with the same
+        // budget would truncate again, so fail fast. What arrived before the
+        // cut is still worth keeping: discarding it loses a whole batch over
+        // its last key.
         const hint = ctx.truncationHint ? ` ${ctx.truncationHint}` : ''
-        log.warn(`Translate response truncated for ${ctx.label}: provider hit the token limit.${hint}`)
+        let salvaged: T | undefined
+        try {
+          const parsed = ctx.parse(response.text, true)
+          if (!carriesNothing(parsed)) salvaged = parsed
+        }
+        catch {
+          // Nothing parseable arrived; reported as a plain truncation below.
+        }
+        if (salvaged !== undefined) {
+          log.warn(
+            `Translate response truncated for ${ctx.label}: provider hit the token limit — `
+            + `kept ${recoveredCount(salvaged)} complete translation(s), the rest are reported as failed.${hint}`,
+          )
+          return { status: 'partial', value: salvaged, model }
+        }
+        log.warn(`Translate response truncated for ${ctx.label}: provider hit the token limit before anything usable arrived.${hint}`)
         return { status: 'truncated', model }
       }
       if (response.text.trim() === '') {
         throw new TranslateProviderError('Provider returned an empty response', 'provider')
       }
 
-      return { status: 'ok', value: ctx.parse(response.text), model }
+      return { status: 'ok', value: ctx.parse(response.text, false), model }
     } catch (error) {
       if (error instanceof TranslateProviderError && error.kind === 'auth') {
         // Auth failures affect every request — abort the whole run instead of

@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, afterEach } from 'vitest'
 import { requestWithRetry } from '../../src/core/translate/retry.js'
+import { extractJsonFromResponse } from '../../src/core/translate/json-salvage.js'
 import type { TranslateRunState } from '../../src/core/translate/retry.js'
 import type { TranslateFn, TranslateRequest } from '../../src/core/types.js'
 import { TranslateProviderError } from '../../src/llm/providers.js'
@@ -12,6 +13,9 @@ import { ToolError } from '../../src/utils/errors.js'
  */
 
 const req: TranslateRequest = { systemPrompt: 'sys', userMessage: 'user', maxTokens: 16384 }
+
+/** The parser translate_missing uses, so salvage behaves as it does in a run. */
+const parseBatchResponse = (text: string, truncated: boolean) => extractJsonFromResponse(text, { truncated })
 
 /** Drive a run to completion with the backoff timers fast-forwarded. */
 async function runWithFakeTimers<T>(start: () => Promise<T>): Promise<T> {
@@ -86,7 +90,7 @@ describe('requestWithRetry', () => {
     expect(outcome.status).toBe('failed')
   })
 
-  it('does not retry a truncated response', async () => {
+  it('does not retry a truncated response that carried nothing usable', async () => {
     let calls = 0
     const translateFn: TranslateFn = async () => {
       calls++
@@ -95,10 +99,52 @@ describe('requestWithRetry', () => {
 
     const outcome = await requestWithRetry(translateFn, req, {
       label: 'en',
-      parse: () => 'never',
+      parse: parseBatchResponse,
     })
 
     expect(calls).toBe(1)
+    expect(outcome).toEqual({ status: 'truncated', model: 'fake-model' })
+  })
+
+  it('salvages the pairs a truncated response did carry instead of losing the batch', async () => {
+    let calls = 0
+    const translateFn: TranslateFn = async () => {
+      calls++
+      return { text: '{"a":"x","b":"y","c":"z', model: 'fake-model', truncated: true }
+    }
+
+    const outcome = await requestWithRetry(translateFn, req, {
+      label: 'batch 1 in en',
+      parse: parseBatchResponse,
+    })
+
+    expect(calls).toBe(1)
+    expect(outcome).toEqual({ status: 'partial', value: { a: 'x', b: 'y' }, model: 'fake-model' })
+  })
+
+  it('tells the parser the response was cut off so it can distrust the tail', async () => {
+    const seen: boolean[] = []
+    const translateFn: TranslateFn = async () => ({ text: '{"a":"x"}', model: 'fake-model', truncated: true })
+
+    await requestWithRetry(translateFn, req, {
+      label: 'en',
+      parse: (text, truncated) => {
+        seen.push(truncated)
+        return JSON.parse(text) as Record<string, string>
+      },
+    })
+
+    expect(seen).toEqual([true])
+  })
+
+  it('reports a truncated response that parsed to nothing as truncated, not partial', async () => {
+    const translateFn: TranslateFn = async () => ({ text: '{"a":"x"}', model: 'fake-model', truncated: true })
+
+    const outcome = await requestWithRetry(translateFn, req, {
+      label: 'en',
+      parse: () => ({}),
+    })
+
     expect(outcome).toEqual({ status: 'truncated', model: 'fake-model' })
   })
 

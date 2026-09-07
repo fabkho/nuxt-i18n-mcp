@@ -5,7 +5,18 @@
 
 import { log } from '../../utils/logger.js'
 
-export function extractJsonFromResponse(responseText: string): Record<string, unknown> {
+export interface ExtractJsonOptions {
+  /**
+   * The provider reported it stopped at the token limit. Two things follow:
+   * the last pair that parses is no longer trustworthy (a value cut mid-string
+   * can still close cleanly, so it is dropped), and the recovery is not warned
+   * about here — a caller that already knows the response was cut reports what
+   * it kept itself.
+   */
+  truncated?: boolean
+}
+
+export function extractJsonFromResponse(responseText: string, options: ExtractJsonOptions = {}): Record<string, unknown> {
   const trimmed = responseText.trim()
 
   // Tier 1: direct parse
@@ -47,7 +58,15 @@ export function extractJsonFromResponse(responseText: string): Record<string, un
         depth--
         if (depth === 0) {
           const candidate = trimmed.slice(start, i + 1)
-          return JSON.parse(candidate) as Record<string, unknown>
+          try {
+            return JSON.parse(candidate) as Record<string, unknown>
+          }
+          catch {
+            // Balanced braces are not valid JSON on their own — a stray token
+            // between two pairs balances just as well. Fall through to the
+            // salvage tier rather than failing the whole response.
+          }
+          break
         }
       }
     }
@@ -60,12 +79,14 @@ export function extractJsonFromResponse(responseText: string): Record<string, un
   // over two absent characters left keys untranslated across repeated runs,
   // and each rerun asked the model for them again.
   if (start !== -1) {
-    const salvaged = salvageTruncatedObject(trimmed.slice(start))
+    const salvaged = salvageTruncatedObject(trimmed.slice(start), options.truncated ?? false)
     if (salvaged) {
-      log.warn(
-        `Translate response ended mid-object — recovered ${Object.keys(salvaged).length} complete pair(s). `
-        + 'Remaining keys are reported as failed and can be retried.',
-      )
+      if (!options.truncated) {
+        log.warn(
+          `Translate response ended mid-object — recovered ${Object.keys(salvaged).length} complete pair(s). `
+          + 'Remaining keys are reported as failed and can be retried.',
+        )
+      }
       return salvaged
     }
 
@@ -82,13 +103,34 @@ export function extractJsonFromResponse(responseText: string): Record<string, un
  * whole. Tries the string as-is first — a response missing only its brace is
  * the common case — then falls back to the last pair that ended cleanly,
  * dropping whatever was half-written after it.
+ *
+ * The two candidates carry different guarantees. Everything before the last
+ * top-level comma is provably complete: the model wrote the comma after it.
+ * The as-is candidate has no such witness — `"key": "Hal` and `"key": "Hallo`
+ * both close cleanly once a brace is appended, so a value cut mid-string is
+ * indistinguishable from a finished one. `dropSuspectLastPair` discards it,
+ * which is what a provider-reported truncation demands and what a merely
+ * brace-less response does not.
  */
-function salvageTruncatedObject(text: string): Record<string, unknown> | null {
-  for (const candidate of [text, text.slice(0, lastCompletePairEnd(text))]) {
-    if (!candidate) continue
+function salvageTruncatedObject(text: string, dropSuspectLastPair: boolean): Record<string, unknown> | null {
+  const candidates: Array<{ text: string, suspectLastPair: boolean }> = [
+    { text, suspectLastPair: dropSuspectLastPair },
+    { text: text.slice(0, lastCompletePairEnd(text)), suspectLastPair: false },
+  ]
+
+  for (const candidate of candidates) {
+    if (!candidate.text) continue
     try {
-      const parsed = JSON.parse(`${candidate}}`) as Record<string, unknown>
-      if (parsed && typeof parsed === 'object' && Object.keys(parsed).length > 0) return parsed
+      const parsed = JSON.parse(`${candidate.text}}`) as Record<string, unknown>
+      if (!parsed || typeof parsed !== 'object') continue
+      const keys = Object.keys(parsed)
+      if (candidate.suspectLastPair) {
+        // Key order is insertion order, so the last key is the last one the
+        // provider wrote — and the only one truncation can have corrupted.
+        const lastKey = keys[keys.length - 1]
+        if (lastKey !== undefined) delete parsed[lastKey]
+      }
+      if (Object.keys(parsed).length > 0) return parsed
     }
     catch {
       // Try the shorter cut.

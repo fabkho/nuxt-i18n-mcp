@@ -349,6 +349,87 @@ describe('translateMissing through the translate seam', () => {
       expect(await readLocale('en')).toEqual({})
     })
 
+    /**
+     * A batch cut off at the token limit still carries the pairs that arrived.
+     * Discarding them costs the whole batch for the sake of its last key, which
+     * is what turned a real 30-locale run into "translated 795 and lost 141".
+     *
+     * The three cases differ only in where the cut lands, and that is exactly
+     * what decides how much is provably complete: a pair followed by a top-level
+     * comma is witnessed by the model itself, while the last pair before the cut
+     * never is — `"Hal` and `"Hallo` close identically once a brace is appended.
+     */
+    describe('salvage of a batch cut off at the token limit', () => {
+      const SCOPE = ['greeting', 'actions.save', 'actions.cancel']
+
+      /** Answer every batch with one fixed, cut-off body. */
+      async function truncatedRun(text: string) {
+        return translateMissing({
+          projectDir,
+          layer: 'root',
+          targetLocales: ['en'],
+          keys: SCOPE,
+          translateFn: async () => ({ text, model: 'fake-model', truncated: true }),
+        })
+      }
+
+      it('keeps every pair a top-level comma proved complete', async () => {
+        const result = await truncatedRun(
+          '{"greeting":"[t] Hallo {name}","actions.save":"[t] Speichern","actions.cancel":"[t] Abbre',
+        )
+
+        expect(result.results.en.translated).toEqual(['greeting', 'actions.save'])
+        expect(result.results.en.failed).toEqual([{ key: 'actions.cancel', reason: 'truncated' }])
+        expect(await readLocale('en')).toEqual({
+          greeting: '[t] Hallo {name}',
+          actions: { save: '[t] Speichern' },
+        })
+      })
+
+      it('drops a value cut mid-string', async () => {
+        const result = await truncatedRun('{"greeting":"[t] Hallo {name}","actions.save":"[t] Spei')
+
+        expect(result.results.en.translated).toEqual(['greeting'])
+        expect(result.results.en.failed).toEqual([
+          { key: 'actions.save', reason: 'truncated' },
+          { key: 'actions.cancel', reason: 'truncated' },
+        ])
+        expect(await readLocale('en')).toEqual({ greeting: '[t] Hallo {name}' })
+      })
+
+      it('drops a last pair that closed cleanly but has no comma to witness it', async () => {
+        const result = await truncatedRun('{"greeting":"[t] Hallo {name}","actions.save":"[t] Speichern"')
+
+        expect(result.results.en.translated).toEqual(['greeting'])
+        expect(result.results.en.failed).toEqual([
+          { key: 'actions.save', reason: 'truncated' },
+          { key: 'actions.cancel', reason: 'truncated' },
+        ])
+        expect(await readLocale('en')).toEqual({ greeting: '[t] Hallo {name}' })
+      })
+
+      it('keeps missing = translated + failed + skipped for a salvaged batch', async () => {
+        const result = await truncatedRun(
+          '{"greeting":"[t] Hallo {name}","actions.save":"[t] Speichern","actions.cancel":"[t] Abbre',
+        )
+        const en = result.results.en
+
+        expect(en.missing).toBe(3)
+        expect(en.missing).toBe(en.translated.length + en.failed.length + en.skipped.length)
+        expect(result.summary.totalTranslated + result.summary.totalFailed + result.summary.totalSkipped)
+          .toBe(en.missing)
+      })
+
+      it('does not report a salvaged batch\'s lost keys as omitted by the model', async () => {
+        const result = await truncatedRun(
+          '{"greeting":"[t] Hallo {name}","actions.save":"[t] Speichern","actions.cancel":"[t] Abbre',
+        )
+
+        expect(result.results.en.failed.map((f: { reason: string }) => f.reason))
+          .not.toContain('omitted-by-model')
+      })
+    })
+
     // generous timeout: the production retry waits 4s before the second attempt
     it('retries after a rate-limit error and succeeds', { timeout: 15_000 }, async () => {
       let calls = 0
@@ -424,6 +505,27 @@ describe('translateMissing through the translate seam', () => {
       expect(result.translated).toEqual([])
       expect(result.failed).toEqual([{ locale: 'en', reason: 'truncated' }])
       expect(await readLocale('en')).toEqual({})
+    })
+
+    // The requested key is complete here — a comma after it proves so — and only
+    // the model's own trailing invention was cut.
+    it('writes the requested key when only what followed it was cut off', async () => {
+      const result = await translateKey({
+        projectDir,
+        layer: 'root',
+        key: 'greeting',
+        sourceLocale: 'de',
+        targetLocales: ['en'],
+        translateFn: async () => ({
+          text: '{"greeting":"Hello {name}","note":"trailing chat',
+          model: 'fake-model',
+          truncated: true,
+        }),
+      })
+
+      expect(result.translated).toEqual(['en'])
+      expect(result.failed).toEqual([])
+      expect((await readLocale('en')).greeting).toBe('Hello {name}')
     })
 
     // generous timeout: the retry waits 4s before the second attempt
