@@ -15,6 +15,27 @@ Describe the project: detected config, locale directories per layer with file co
 | --- | --- | --- | --- |
 | `projectDir` | `string` | no | Absolute path to the project root. Defaults to I18N_PROJECT_DIR, then server cwd. Example: "/home/user/my-app". |
 
+## Result
+
+| Field | Type | Description |
+| --- | --- | --- |
+| `framework` | `string` | Detected framework, e.g. "nuxt", "laravel". Absent when nothing was detected. |
+| `rootDir` | `string` | Absolute path to the project root. |
+| `defaultLocale` | `string` | Default locale code — the source locale every translate call falls back to. |
+| `fallbackLocale` | `Record<string, string[]>` | The framework's fallback chain. Empty when the framework declares none. |
+| `locales` | `object[]` | Every locale of the project. |
+| `localeDirs` | `object[]` | Every locale directory, one per layer, alias layers included. |
+| `layerRootDirs` | `string[]` | Absolute root directories of every layer, which is what source scanning walks. |
+| `projectConfig` | `object` | The declared config from i18n-kit.config.ts or .i18n-mcp.json, as written. Absent when the project has none. |
+| `localeFileFormat` | `"json" \| "php-array" \| "yaml"` | Format of the locale files. Absent means the default, "json". |
+| `apps` | `object[]` | Apps and the layers each consumes — the consumer graph orphan scoping reads. |
+| `protectedLocales` | `string[]` | Canonical codes of the locales the translate operations leave alone. Empty when none are protected. |
+| `layers` | `object[]` | One entry per locale directory, with file counts and key namespaces. |
+| `layerGraph` | `object` | Which layers are shared and which apps consume which layer — what answers where a new key belongs. |
+| `translationMode` | `"provider" \| "agent"` | Added by the server: whether it has an LLM provider configured ("provider") or hands back contexts to translate inline ("agent"). Check this before calling a translating tool. |
+| `translationProvider` | `string` | Added by the server: the configured provider name. Absent in agent mode. |
+| `translationModel` | `string` | Added by the server: the configured model name. Absent in agent mode. |
+
 ## Paired CLI Command
 
 The same operation runs from a terminal as [`the-i18n-cli discover`](/reference/cli/discover), whose page documents its flags.

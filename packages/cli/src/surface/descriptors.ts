@@ -35,6 +35,29 @@ import type {
   SearchTranslationsResult,
   TranslationStatusResult,
 } from '../core/types.js'
+// The result schemas. Imported outright, like the report mappings above: they
+// are what the tool registrar advertises to a host, and the CLI already loads
+// zod to read a project config.
+import {
+  checkUndefinedKeysResult,
+  discoverResult,
+  findDuplicateKeysResult,
+  getTranslationsResult,
+  initResult,
+  listNamespacesResult,
+  missingTranslationsResult,
+  moveTranslationKeyOutcome,
+  orphanCommandResult,
+  orphanReportSummary,
+  removeTranslationsResult,
+  scaffoldLocaleResult,
+  searchReportSummary,
+  searchTranslationsResult,
+  translateKeyResult,
+  translateMissingOutcome,
+  translationStatusResult,
+  writeTranslationsResult,
+} from './results.js'
 import { defineOperation } from './types.js'
 import type { AnyOperationDescriptor, ParamSpec, Params } from './types.js'
 import {
@@ -150,6 +173,7 @@ export const descriptors: readonly AnyOperationDescriptor[] = [
       },
       dryRun: dryRun('Report the config that would be written without touching disk. Default: false.'),
     },
+    result: initResult,
     async run(args) {
       const { initProjectConfig } = await core()
       return initProjectConfig({
@@ -167,6 +191,7 @@ export const descriptors: readonly AnyOperationDescriptor[] = [
     description: 'Describe the project: detected config, locale directories per layer with file counts and top-level namespaces, the layer graph, and the hand-maintained locales.',
     longDescription: 'Call this first to understand the project before reading or writing translations. The result also names the active translation mode ("provider" when the server has an env-configured LLM provider, "agent" otherwise). layerGraph answers where a new key belongs: a key used by more than one app belongs in a layer those apps share, and layerGraph.shared names those layers.',
     params: {},
+    result: discoverResult,
     async run(args) {
       const { describeProject } = await core()
       return describeProject({ projectDir: args.projectDir })
@@ -189,6 +214,7 @@ export const descriptors: readonly AnyOperationDescriptor[] = [
       },
       locale: readLocale,
     },
+    result: listNamespacesResult,
     async run(args) {
       const { listNamespaces } = await core()
       return listNamespaces({ layer: args.layer, locale: args.locale, projectDir: args.projectDir })
@@ -220,6 +246,7 @@ export const descriptors: readonly AnyOperationDescriptor[] = [
         cli: { hidden: true },
       },
     },
+    result: getTranslationsResult,
     async run(args) {
       const { getTranslations } = await core()
       return getTranslations({
@@ -253,6 +280,7 @@ export const descriptors: readonly AnyOperationDescriptor[] = [
       },
       dryRun: dryRun('Return a preview of what would be written without writing any files. Default: false.'),
     },
+    result: writeTranslationsResult,
     async run(args) {
       const { writeTranslations } = await core()
       return writeTranslations({
@@ -287,11 +315,13 @@ export const descriptors: readonly AnyOperationDescriptor[] = [
         mcp: { hidden: true },
       },
     },
+    result: missingTranslationsResult,
     gates: [{ flag: 'failOnMissing', counter: 'totalMissingKeys', threshold: 0 }],
     report: {
       name: 'get_missing_translations',
       outputFile: { example: '.i18n-reports/missing-translations.json' },
       summary: (result: MissingTranslationsResult) => result.summary,
+      summarySchema: missingTranslationsResult.shape.summary,
       codequality: {
         findings: 'missing translations',
         issues: (result: MissingTranslationsResult, ctx) => missingTranslationsToCodeQuality(result, {
@@ -331,6 +361,7 @@ export const descriptors: readonly AnyOperationDescriptor[] = [
         mcp: { hidden: true },
       },
     },
+    result: translationStatusResult,
     // The threshold comes from the flag's own value; `direction: below` is what
     // makes this a floor rather than a ceiling (see resolveExitCode).
     gates: [{ flag: 'failUnder', counter: 'completionPercent', direction: 'below' }],
@@ -340,6 +371,7 @@ export const descriptors: readonly AnyOperationDescriptor[] = [
       // Summary only: the per-locale and per-layer arrays grow with the
       // project, and a health check must never flood a caller's context.
       summary: (result: TranslationStatusResult) => result.summary,
+      summarySchema: translationStatusResult.shape.summary,
       codequality: {
         findings: 'incomplete locales and unconsumed layers',
         // The gate's threshold is the report's threshold: a pipeline that asks
@@ -402,6 +434,7 @@ export const descriptors: readonly AnyOperationDescriptor[] = [
         description: 'Return one row per key and locale — layer, locale, key, value — instead of one row per key. Several times the output for the same findings, so ask for it when the per-locale values are what you are after. Default: false.',
       },
     },
+    result: searchTranslationsResult,
     report: {
       name: 'search_translations',
       outputFile: {
@@ -413,6 +446,7 @@ export const descriptors: readonly AnyOperationDescriptor[] = [
       // The one operation whose result carries no summary of its own: the match
       // count is what is left of it once the matches are on disk.
       summary: (result: SearchTranslationsResult) => ({ totalMatches: result.totalMatches }),
+      summarySchema: searchReportSummary,
     },
     async run(args) {
       const { searchTranslations } = await core()
@@ -446,6 +480,7 @@ export const descriptors: readonly AnyOperationDescriptor[] = [
       },
       dryRun: dryRun('Return a preview of what would be removed without writing any files. Default: false.'),
     },
+    result: removeTranslationsResult,
     async run(args) {
       const { removeTranslations } = await core()
       return removeTranslations({
@@ -485,6 +520,7 @@ export const descriptors: readonly AnyOperationDescriptor[] = [
       },
       dryRun: dryRun('Return the plan without writing any files. Default: false.'),
     },
+    result: moveTranslationKeyOutcome,
     async run(args) {
       const { moveTranslationKey } = await core()
       return moveTranslationKey({
@@ -553,6 +589,7 @@ export const descriptors: readonly AnyOperationDescriptor[] = [
         mcp: { hidden: true },
       },
     },
+    result: translateMissingOutcome,
     // Without this gate a partly failed run is indistinguishable from a clean
     // one: isTotalFailure only reports exit 1 when NOTHING was translated, so a
     // run that wrote 795 keys and lost 141 exits 0 and its partial result gets
@@ -629,6 +666,7 @@ export const descriptors: readonly AnyOperationDescriptor[] = [
       },
       ...providerParams,
     },
+    result: translateKeyResult,
     usesTranslateFn: true,
     async run(args, ctx) {
       const { translateKey } = await core()
@@ -672,6 +710,7 @@ export const descriptors: readonly AnyOperationDescriptor[] = [
       scanDirs,
       excludeDirs,
     },
+    result: checkUndefinedKeysResult,
     /**
      * Always on, and a gate rather than a run failure. A key that renders raw in
      * production is a defect, so there is no flag to opt into caring about it —
@@ -691,6 +730,7 @@ export const descriptors: readonly AnyOperationDescriptor[] = [
       name: 'find_undefined_keys',
       outputFile: { example: '.i18n-reports/undefined-keys.json' },
       summary: (result: CheckUndefinedKeysResult) => result.summary,
+      summarySchema: checkUndefinedKeysResult.shape.summary,
       codequality: {
         findings: 'findings',
         // Uncertain findings are deliberately not mapped; see codequality.ts.
@@ -755,6 +795,7 @@ export const descriptors: readonly AnyOperationDescriptor[] = [
         mcp: { hidden: true },
       },
     },
+    result: orphanCommandResult,
     gates: [{ flag: 'failOnOrphans', counter: 'orphanCount', threshold: 0 }],
     report: {
       // Three questions, three report names — the paths pipelines archive.
@@ -763,6 +804,7 @@ export const descriptors: readonly AnyOperationDescriptor[] = [
         : args.remove === true ? 'remove_orphan_keys' : 'find_orphan_keys'),
       outputFile: { example: '.i18n-reports/orphan-keys.json' },
       summary: (result: OrphanCommandResult) => result.summary,
+      summarySchema: orphanReportSummary,
       codequality: {
         findings: 'orphan findings',
         // A result carrying usages answers where keys are referenced, which is
@@ -845,10 +887,12 @@ export const descriptors: readonly AnyOperationDescriptor[] = [
         description: 'Shortest value worth grouping when byValue is set. Default: 4 — below that, values like "OK" repeat across unrelated namespaces legitimately.',
       },
     },
+    result: findDuplicateKeysResult,
     report: {
       name: 'find_duplicate_keys',
       outputFile: { example: '.i18n-reports/duplicate-keys.json' },
       summary: (result: FindDuplicateKeysResult) => result.summary,
+      summarySchema: findDuplicateKeysResult.shape.summary,
       codequality: {
         findings: 'duplicate keys',
         issues: (result: FindDuplicateKeysResult, ctx) => duplicateKeysToCodeQuality(result, {
@@ -886,6 +930,7 @@ export const descriptors: readonly AnyOperationDescriptor[] = [
       },
       dryRun: dryRun('Report the files that would be created without writing them. Default: false.'),
     },
+    result: scaffoldLocaleResult,
     async run(args) {
       const { scaffoldLocaleFiles } = await core()
       return scaffoldLocaleFiles({

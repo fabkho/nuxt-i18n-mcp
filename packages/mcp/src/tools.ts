@@ -10,7 +10,7 @@
  */
 
 import { z } from 'zod'
-import { assertReportPaths, divertToReport, ToolError, toErrorMessage } from '@the-i18n-kit/cli'
+import { assertReportPaths, divertToReport, outputSchema, ToolError, toErrorMessage } from '@the-i18n-kit/cli'
 import type { AnyOperationDescriptor, ParamSpec, ProgressFn, TranslateFn } from '@the-i18n-kit/cli'
 import type { McpServer, ServerContext } from '@modelcontextprotocol/server'
 
@@ -27,10 +27,19 @@ export interface ToolContext {
   decorate?: Record<string, (result: unknown) => unknown>
 }
 
-/** Wrap a plain result object as MCP text content. */
+/**
+ * A result as a tool answers with it: the typed value under `structuredContent`
+ * and the same value as text.
+ *
+ * Both, not one: `structuredContent` is the typed value a host hands its model,
+ * and what the SDK validates against the tool's advertised `outputSchema`; the
+ * text block is what a client reading only `content` renders. The SDK projects
+ * the pair onto whichever protocol era the connection negotiated.
+ */
 export function jsonContent(data: unknown) {
   return {
     content: [{ type: 'text' as const, text: JSON.stringify(data, null, 2) }],
+    structuredContent: data as Record<string, unknown>,
   }
 }
 
@@ -87,6 +96,12 @@ export function registerFromDescriptor(
         .join(' '),
       ...(tool.annotations === undefined ? {} : { annotations: tool.annotations }),
       inputSchema: inputSchema(descriptor),
+      // What the answer looks like, for a host that shows its model the shape
+      // of a result rather than only the shape of a call. The SDK rejects a
+      // structured result that fails this, so it covers every shape the handler
+      // below can return — the whole result, and the compact stand-in a
+      // diverted run answers with.
+      outputSchema: outputSchema(descriptor),
     },
     async (args: Record<string, unknown>, requestCtx: ServerContext) => {
       try {

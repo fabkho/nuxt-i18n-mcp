@@ -23,6 +23,15 @@ Find the keys missing in the target locales and translate them. Without a transl
 | `compact` | `boolean` | no | Return a compact summary (totalTranslated, totalFailed, byLocale) instead of full per-locale results. Default: false. |
 | `projectDir` | `string` | no | Absolute path to the project root. Defaults to I18N_PROJECT_DIR, then server cwd. Example: "/home/user/my-app". |
 
+## Result
+
+| Field | Type | Description |
+| --- | --- | --- |
+| `results` | `Record<string, object>` | Full per-locale results. Absent in compact mode, which returns summary.byLocale instead. |
+| `fallbackContexts` | `Record<string, Record<string, unknown>>` | Per-locale context to translate inline and persist with write_translations. Present only in agent mode. |
+| `summary` | `object` | What the run did across every locale of the layer. |
+| `layers` | `Record<string, object>` | One full result per locale-backed layer. |
+
 ## Behavior Hints
 
 A host reads these to decide whether a call needs your confirmation first.

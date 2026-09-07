@@ -14,6 +14,7 @@
  * reference generator, none of which write a report.
  */
 
+import { z } from 'zod'
 import type { AnyOperationDescriptor, AnyReportSpec, GateSpec, Params } from './types.js'
 
 /** The parameters a `report` declaration adds, in the order they are offered. */
@@ -45,6 +46,30 @@ export function reportParams(spec: AnyReportSpec): Params {
           },
         }),
   }
+}
+
+/**
+ * Every shape a caller can be handed for one operation: its whole result, and
+ * — where a report is declared — the compact stand-in a diverted run returns
+ * instead.
+ *
+ * The MCP server advertises this as the tool's `outputSchema`, and the SDK
+ * rejects a `structuredContent` that fails it, so the union has to be exactly
+ * the two shapes `divertToReport` can produce. Built here, from the same
+ * declaration the diversion itself reads, rather than restated per tool.
+ */
+export function outputSchema(descriptor: AnyOperationDescriptor): z.ZodType {
+  const spec = descriptor.report
+  if (spec === undefined) return descriptor.result
+  return z.union([
+    descriptor.result,
+    z.object({
+      reportFile: z.string()
+        .describe('Absolute path the full JSON result was written to. Read the file for the findings; the summary below is all that came back.'),
+      summary: spec.summarySchema
+        .describe('The counts from the full result, so a caller can act on them without reading the file.'),
+    }),
+  ])
 }
 
 /**

@@ -24,6 +24,30 @@ export interface HintDoc {
   value: string
 }
 
+/** One top-level field of a tool's result. */
+export interface ResultFieldDoc {
+  name: string
+  /** The field's schema rendered as a type, the same way a parameter's is. */
+  type: string
+  description: string
+}
+
+/**
+ * A tool's result, as the reference renders it.
+ *
+ * Only the top level: a result carrying findings per locale, per layer and per
+ * key nests several levels deep, and rendering that is a page rather than a
+ * section. The fields and their descriptions are what a reader needs to know
+ * what came back and what to read next.
+ */
+export interface ResultDoc {
+  /** The whole result rendered as a type, for a schema whose root has no named fields. */
+  type: string
+  /** The description on the schema root. Empty for a schema that describes its fields instead. */
+  description: string
+  fields: ResultFieldDoc[]
+}
+
 export interface ToolDoc {
   name: string
   /** The advertised title, or the name when the server sends none. */
@@ -31,6 +55,8 @@ export interface ToolDoc {
   description: string
   params: ParamDoc[]
   hints: HintDoc[]
+  /** Absent for a tool that advertises no output schema. */
+  result?: ResultDoc
   /** The CLI command this tool pairs with, when one is declared and exposed. */
   command?: string
 }
@@ -101,8 +127,47 @@ function toToolDoc(tool: McpToolListing): ToolDoc {
     description: tool.description ?? '',
     params: toParamDocs(tool.inputSchema),
     hints: toHintDocs(tool),
+    result: toResultDoc(tool.outputSchema),
     command: PAIRED_COMMANDS[tool.name],
   }
+}
+
+function toResultDoc(schema: JsonSchemaLike | undefined): ResultDoc | undefined {
+  if (schema === undefined) return undefined
+  return {
+    type: typeLabel(schema),
+    description: schema.description ?? '',
+    fields: resultFields(schema),
+  }
+}
+
+/**
+ * The top-level fields of a result, across every shape the tool can answer
+ * with.
+ *
+ * A tool that diverts a large result to a file advertises a union of the whole
+ * result and the compact stand-in, and an operation answering several questions
+ * advertises one member per answer. All of them are the same tool's result, so
+ * they read as one table; the first member to name a field describes it, since
+ * a field two members share means the same thing in both.
+ */
+function resultFields(schema: JsonSchemaLike): ResultFieldDoc[] {
+  const named = Object.entries(schema.properties ?? {})
+  if (named.length > 0) {
+    return named.map(([name, property]) => ({
+      name,
+      type: typeLabel(property),
+      description: property.description ?? '',
+    }))
+  }
+
+  const byName = new Map<string, ResultFieldDoc>()
+  for (const member of schema.anyOf ?? []) {
+    for (const field of resultFields(member)) {
+      if (!byName.has(field.name)) byName.set(field.name, field)
+    }
+  }
+  return [...byName.values()]
 }
 
 function toParamDocs(schema: JsonSchemaLike): ParamDoc[] {
@@ -144,12 +209,14 @@ export function toolsAccepting(tools: ToolDoc[], param: string): ToolDoc[] {
  *
  * Enums and `const` render as their literals, since that is what a caller has
  * to pass; anything the schema does not describe renders as `unknown` rather
- * than as a guess.
+ * than as a guess. Alternatives that render alike collapse: a result whose rows
+ * take two object shapes is `object[]`, and `object[] | object[]` would read as
+ * a distinction the reader cannot see.
  */
 function typeLabel(schema: JsonSchemaLike): string {
   if (schema.enum !== undefined) return schema.enum.map(literal).join(' | ')
   if (schema.const !== undefined) return literal(schema.const)
-  if (schema.anyOf !== undefined) return schema.anyOf.map(typeLabel).join(' | ')
+  if (schema.anyOf !== undefined) return [...new Set(schema.anyOf.map(typeLabel))].join(' | ')
   if (schema.type === 'array') return `${schema.items === undefined ? 'unknown' : typeLabel(schema.items)}[]`
   if (schema.type === 'object') return objectLabel(schema)
   return schema.type ?? 'unknown'

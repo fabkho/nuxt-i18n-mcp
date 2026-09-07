@@ -29,6 +29,7 @@ let tools: Array<{
   title?: string
   description?: string
   inputSchema: { properties?: Record<string, unknown>, required?: string[] }
+  outputSchema?: { type?: string, description?: string, properties?: Record<string, unknown>, anyOf?: unknown[] }
 }>
 
 beforeAll(async () => {
@@ -104,6 +105,28 @@ describe('the operation table drives the advertised tools', () => {
         expect((properties[name] as { description?: string }).description)
           .toBe(descriptor.params[name]?.description)
       }
+    }
+  })
+
+  /**
+   * The half of the contract a host reads about the answer rather than the
+   * call. A tool without one hands its model a JSON blob to guess at, and the
+   * SDK has nothing to validate the structured result against.
+   */
+  it('advertises an output schema describing an object for every tool', () => {
+    for (const descriptor of mcpDescriptors) {
+      const schema = advertised(descriptor.mcp?.name ?? '').outputSchema
+
+      expect(schema, `${descriptor.mcp?.name} advertises no outputSchema`).toBeDefined()
+      // An object root, on both eras: the 2025 wire shape requires one, and
+      // without it the SDK wraps every result as `{ result: … }`.
+      expect(schema?.type, descriptor.mcp?.name).toBe('object')
+      // Either named fields or a described map — a schema with neither says
+      // nothing more than "an object came back".
+      expect(
+        schema?.properties ?? schema?.anyOf ?? schema?.description,
+        `${descriptor.mcp?.name} describes nothing about its result`,
+      ).toBeDefined()
     }
   })
 

@@ -18,6 +18,14 @@ Create empty locale files for new languages, copying the key structure of the de
 | `dryRun` | `boolean` | no | Report the files that would be created without writing them. Default: false. |
 | `projectDir` | `string` | no | Absolute path to the project root. Defaults to I18N_PROJECT_DIR, then server cwd. Example: "/home/user/my-app". |
 
+## Result
+
+| Field | Type | Description |
+| --- | --- | --- |
+| `created` | `object[]` | Files that were created, or would be under dryRun. |
+| `skipped` | `object[]` | Files that already existed and were left alone. |
+| `dryRun` | `boolean` | True when nothing was written because a preview was asked for. |
+
 ## Paired CLI Command
 
 The same operation runs from a terminal as [`the-i18n-cli scaffold`](/reference/cli/scaffold), whose page documents its flags.

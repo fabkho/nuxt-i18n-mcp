@@ -71,6 +71,34 @@ describe('the MCP reference against the advertised tool listing', () => {
     }
   })
 
+  it('documents the result of every advertised tool', () => {
+    for (const tool of model.tools) {
+      expect(tool.result, `${tool.name} advertises no output schema`).toBeDefined()
+      const result = section(toolPage(output, tool.name), '## Result')
+
+      // Either the fields, or the type of a result that has none — never an
+      // empty section, which reads as "nothing comes back".
+      expect(result.trim().length, tool.name).toBeGreaterThan(0)
+      if (tool.result !== undefined && tool.result.fields.length > 0) {
+        expect([...rowNames(result)].sort(), tool.name)
+          .toEqual(tool.result.fields.map(field => field.name).sort())
+      }
+    }
+  })
+
+  it('advertises a description for every result field it documents', () => {
+    // A blank description column is a gap in the server's own schema, and it
+    // reads as one to the model the schema was written for.
+    for (const tool of model.tools) {
+      for (const field of tool.result?.fields ?? []) {
+        expect(field.description, `${tool.name}.${field.name}`).not.toBe('')
+      }
+      if (tool.result !== undefined && tool.result.fields.length === 0) {
+        expect(tool.result.description, `${tool.name} result`).not.toBe('')
+      }
+    }
+  })
+
   it('pairs a tool only with a CLI command the reference documents', () => {
     const paired = model.tools.filter(tool => tool.command !== undefined)
     expect(paired.length).toBeGreaterThan(0)

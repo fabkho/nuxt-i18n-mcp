@@ -17,6 +17,7 @@
  * the drift test reads.
  */
 
+import type { z } from 'zod'
 import type { I18nConfig } from '../config/types.js'
 import type { CodeQualityIssue } from '../core/codequality.js'
 import type { ProgressFn, TranslateFn } from '../core/types.js'
@@ -158,6 +159,17 @@ export interface ReportSpec<R = unknown, A = Record<string, unknown>> {
   /** The compact stand-in returned once the full result is on disk. */
   summary: (result: R) => unknown
   /**
+   * That stand-in, as a schema. Declared next to the builder so the tool's
+   * advertised output schema can state both shapes an operation with a report
+   * can answer with, exactly — a host validates a result against that schema,
+   * so a summary described as `unknown` would document nothing and accept
+   * anything.
+   *
+   * Written as a projection of the operation's own result schema wherever the
+   * summary is a field of the result, which is what keeps the two together.
+   */
+  summarySchema: z.ZodType
+  /**
    * The `outputFile` parameter as this operation offers it. Declared here and
    * nowhere else, so an operation cannot advertise the parameter without the
    * plumbing behind it, nor grow the plumbing without the parameter.
@@ -283,6 +295,20 @@ export interface OperationDescriptor<P extends Params = Params> {
    */
   longDescription?: string
   params: P
+  /**
+   * The whole result the operation answers with, as a schema.
+   *
+   * The MCP server advertises it as the tool's `outputSchema` and validates the
+   * `structuredContent` it returns against it, so a host hands its model a
+   * description of the answer and not just of the call. The schemas live in
+   * `./results.ts`, which is where they are held to `core/types.ts`.
+   *
+   * Typed as an opaque schema rather than one tied to `run`'s return type: a
+   * `run` whose arguments are contextually typed is not an inference site, so
+   * nothing here can see the operation's own result type. `results.ts` checks
+   * every schema against its interface instead.
+   */
+  result: z.ZodType
   /** CI gates the CLI evaluates. Exit codes are a CLI notion, so MCP ignores these. */
   gates?: GateSpec[]
   /**

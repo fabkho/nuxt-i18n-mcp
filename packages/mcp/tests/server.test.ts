@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os'
 import { createMcpHandler, InMemoryTransport } from '@modelcontextprotocol/server'
 import type { McpHttpHandler, McpServer } from '@modelcontextprotocol/server'
 import { Client, StreamableHTTPClientTransport } from '@modelcontextprotocol/client'
-import { clearConfigCache } from '@the-i18n-kit/cli'
+import { clearConfigCache, descriptors, outputSchema } from '@the-i18n-kit/cli'
 import type { TranslateFn } from '@the-i18n-kit/cli'
 
 /**
@@ -60,6 +60,32 @@ async function callToolOn(c: Client, name: string, args: Record<string, unknown>
 
 async function callTool(name: string, args: Record<string, unknown>) {
   return callToolOn(client, name, args)
+}
+
+/**
+ * The schema the server advertises for a tool, built from the same descriptor
+ * the tool was registered from. Nothing is transcribed here: a tool whose
+ * result stopped matching its declaration fails against the declaration.
+ */
+const OUTPUT_SCHEMAS = new Map(
+  descriptors
+    .filter(descriptor => descriptor.mcp !== null)
+    .map(descriptor => [descriptor.mcp?.name ?? '', outputSchema(descriptor)] as const),
+)
+
+/**
+ * Assert a call answered with a typed result its advertised schema accepts.
+ *
+ * The SDK validates `structuredContent` itself and turns a failure into a tool
+ * error, so this is belt and braces — but it is the half that names the field
+ * that drifted, and it fails on a missing structured result rather than on the
+ * error text that follows from one.
+ */
+function expectStructured(name: string, result: { structuredContent?: unknown }): Record<string, unknown> {
+  expect(result.structuredContent, `${name} returned no structuredContent`).toBeDefined()
+  const parsed = OUTPUT_SCHEMAS.get(name)?.safeParse(result.structuredContent)
+  expect(parsed?.success, `${name}: ${JSON.stringify(parsed?.error?.issues, null, 2)}`).toBe(true)
+  return result.structuredContent as Record<string, unknown>
 }
 
 /** A well-behaved fake backend: translates every key in the request batch. */
@@ -152,10 +178,38 @@ describe('the-i18n-mcp server over in-memory transport', () => {
     try {
       const { result, text } = await callTool(name, { ...args, projectDir: dir })
       expect(result.isError, `${name}: ${text}`).not.toBe(true)
+      // Both are sent — the typed result for a host that reads structured data,
+      // the text for one that reads only content — and they say the same thing.
+      expect(expectStructured(name, result)).toEqual(JSON.parse(text))
     } finally {
       await rm(dir, { recursive: true, force: true })
     }
   })
+
+  /**
+   * The diverted answer is the other half of what a reporting tool can return,
+   * and the SDK rejects a structured result its schema does not cover — so a
+   * union that forgot the stand-in would fail every diverted call.
+   */
+  it.each(descriptors
+    .filter(descriptor => descriptor.mcp !== null && descriptor.report !== undefined)
+    .map(descriptor => descriptor.mcp?.name ?? ''))(
+    '%s returns a typed summary when the result is diverted to a file',
+    async (name) => {
+      const dir = await makeProject()
+      try {
+        const outputFile = join(dir, 'report.json')
+        const { result, text } = await callTool(name, { ...MINIMAL_ARGS[name], projectDir: dir, outputFile })
+
+        expect(result.isError, `${name}: ${text}`).not.toBe(true)
+        const structured = expectStructured(name, result)
+        expect(Object.keys(structured).sort()).toEqual(['reportFile', 'summary'])
+        expect(structured.reportFile).toBe(outputFile)
+      } finally {
+        await rm(dir, { recursive: true, force: true })
+      }
+    },
+  )
 
   it('exposes no sampling wording in the translate tool descriptions', async () => {
     const { tools } = await client.listTools()
@@ -255,8 +309,11 @@ describe('the-i18n-mcp server over in-memory transport', () => {
   })
 
   it('discover returns the project configuration and the agent translation mode', async () => {
-    const { json } = await callTool('discover', { projectDir })
+    const { json, result } = await callTool('discover', { projectDir })
 
+    // discover is the one result the server adds to — the translation mode is
+    // the process's own state — so its schema has to cover that too.
+    expect(expectStructured('discover', result).translationMode).toBe('agent')
     expect(json?.defaultLocale).toBe('de')
     expect(json?.locales).toEqual([
       expect.objectContaining({ code: 'de' }),
@@ -298,8 +355,12 @@ describe('the-i18n-mcp server over in-memory transport', () => {
   })
 
   it('translate_missing without a translation backend returns fallback contexts', async () => {
-    const { json } = await callTool('translate_missing', { layer: 'root', projectDir })
+    const { json, result } = await callTool('translate_missing', { layer: 'root', projectDir })
 
+    // The agent-mode guidance is added to the result after the operation ran,
+    // so the schema has to cover the decorated shape and not just the plain one.
+    const structured = expectStructured('translate_missing', result)
+    expect((structured.summary as { message?: string }).message).toBeDefined()
     expect(json?.summary.mode).toBe('agent')
     expect(json?.summary.totalSkipped).toBe(2)
     expect(json?.summary.message).toContain('write_translations')

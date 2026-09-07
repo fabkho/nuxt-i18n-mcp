@@ -78,7 +78,11 @@ export function fixtureCliSource(overrides: Partial<CliSource> = {}): CliSource 
   }
 }
 
-/** Advertised with no paired CLI command, and with only the universal parameter. */
+/**
+ * Advertised with no paired CLI command, only the universal parameter, and a
+ * result whose root is a map rather than named fields — the shape the reference
+ * has to name a type for instead of tabulating.
+ */
 export const UNPAIRED_TOOL: McpToolListing = {
   name: 'list_namespaces',
   title: 'List Namespaces',
@@ -88,6 +92,12 @@ export const UNPAIRED_TOOL: McpToolListing = {
     properties: {
       projectDir: { type: 'string', description: 'Absolute path to the project root.' },
     },
+  },
+  outputSchema: {
+    type: 'object',
+    description: 'Layer name → the key tree of that layer.',
+    propertyNames: { type: 'string' },
+    additionalProperties: { type: 'object' },
   },
 }
 
@@ -121,6 +131,32 @@ export const TRANSLATE_MISSING_TOOL: McpToolListing = {
       projectDir: { type: 'string', description: 'Absolute path to the Nuxt project root.' },
     },
     required: ['layer'],
+  },
+  /**
+   * A union root, as a tool that diverts a large result to a file advertises:
+   * the whole result, or the compact stand-in. Both members are documented in
+   * one table, so the reference must read the fields out of `anyOf`.
+   */
+  outputSchema: {
+    type: 'object',
+    anyOf: [
+      {
+        type: 'object',
+        properties: {
+          results: { type: 'object', description: 'Full per-locale results.' },
+          summary: { type: 'object', description: 'What the run did.' },
+        },
+        required: ['summary'],
+      },
+      {
+        type: 'object',
+        properties: {
+          reportFile: { type: 'string', description: 'Absolute path the full result was written to.' },
+          summary: { type: 'object', description: 'What the run did.' },
+        },
+        required: ['reportFile', 'summary'],
+      },
+    ],
   },
   annotations: { title: 'Translate Missing Translations', readOnlyHint: false },
 }

@@ -58,6 +58,7 @@ function renderOverview(tools: ToolDoc[], universalParams: string[]): string {
     toolTable(tools),
     ...pairingSection(tools),
     ...universalParamSection(universalParams),
+    ...resultSection(tools),
     ...outputFileSection(tools),
   ])
 }
@@ -100,6 +101,18 @@ function universalParamSection(universalParams: string[]): string[] {
   ]
 }
 
+/**
+ * What every tool answers with, stated once for the surface. The tool pages
+ * list their own fields; how a result reaches a host is the same everywhere.
+ */
+function resultSection(tools: ToolDoc[]): string[] {
+  if (!tools.every(tool => tool.result !== undefined)) return []
+  return [
+    '## What a Tool Returns',
+    `Every tool advertises an ${code('outputSchema')} and returns its result as ${code('structuredContent')}, so a host hands its model typed data rather than a JSON blob to parse. The same JSON is sent as a text block for hosts that read only that. Each tool page lists the top-level fields of its own result.`,
+  ]
+}
+
 /** Derived: the tools listed here are the ones whose schema carries the parameter. */
 function outputFileSection(tools: ToolDoc[]): string[] {
   const diverting = toolsAccepting(tools, OUTPUT_FILE)
@@ -122,9 +135,28 @@ function renderTool(tool: ToolDoc): string {
     prose(tool.description),
     '## Parameters',
     ...paramSection(tool),
+    ...resultFieldSection(tool),
     ...hintSection(tool.hints),
     ...pairedCommandSection(tool),
   ])
+}
+
+/**
+ * The top level of the result, and no further: the nested shapes below it run
+ * several levels deep, and a reader who needs them has the advertised schema.
+ */
+function resultFieldSection(tool: ToolDoc): string[] {
+  const result = tool.result
+  if (result === undefined) return []
+  if (result.fields.length === 0) {
+    return ['## Result', `${code(result.type)}${result.description === '' ? '' : ` — ${prose(result.description)}`}`]
+  }
+  const rows = result.fields.map(field => [
+    code(field.name),
+    code(cell(field.type)),
+    textCell(field.description),
+  ])
+  return ['## Result', table(['Field', 'Type', 'Description'], rows)]
 }
 
 function paramSection(tool: ToolDoc): string[] {

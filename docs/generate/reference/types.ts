@@ -102,6 +102,12 @@ export interface McpToolListing {
   description?: string
   inputSchema: JsonSchemaLike
   /**
+   * The shape of the result, which a host shows its model and validates the
+   * tool's structured answer against. Optional here because the protocol allows
+   * a tool without one; every tool this server advertises carries one.
+   */
+  outputSchema?: JsonSchemaLike
+  /**
    * Behaviour hints a host uses to decide how much ceremony a call needs — a
    * read-only tool can be called without confirmation.
    */

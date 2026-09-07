@@ -1,9 +1,13 @@
 import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
-import { resolve } from 'node:path'
-import { describe, expect, it } from 'vitest'
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join, resolve } from 'node:path'
+import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { commands } from '../../src/commands/index.js'
+import { clearConfigCache } from '../../src/config/detector.js'
 import { descriptors, visibleParams } from '../../src/surface/descriptors.js'
+import { runOperation } from '../fixtures/surface.js'
 
 /**
  * The drift guard.
@@ -19,6 +23,8 @@ import { descriptors, visibleParams } from '../../src/surface/descriptors.js'
  * - a parameter both surfaces expose is spelled the same on both, and one only
  *   a single surface exposes says so on the parameter
  * - the parameters that ask for a report exist exactly where a report does
+ * - every operation declares the shape of its result, and really answers with
+ *   something that shape accepts
  *
  * The other half — that the server advertises exactly these operations with
  * exactly these parameters — is asserted in `packages/mcp/tests/descriptors.test.ts`,
@@ -172,4 +178,85 @@ describe('the two surfaces agree', () => {
     expect(cliDescriptors.length).toBeGreaterThan(1)
     expect(mcpDescriptors.length).toBeGreaterThan(1)
   })
+})
+
+/**
+ * The arguments each operation needs to answer with something worth checking,
+ * against the project seeded below.
+ *
+ * Written by hand, and held to the table by the first case: an operation added
+ * without an entry here would otherwise be declared to answer in a shape
+ * nothing ever compares a real result against. The mutating operations run as
+ * previews, so one seeded project serves every case regardless of order.
+ */
+const RESULT_CASES: Record<string, Record<string, unknown>> = {
+  // force, because the seeded project already has the config init would write.
+  'init': { dryRun: true, force: true },
+  'discover': {},
+  'list-namespaces': {},
+  'get': { layer: 'root', locale: 'en', keys: ['common.greeting'] },
+  'write': { layer: 'root', translations: { 'common.welcome': { en: 'Welcome' } }, dryRun: true },
+  'missing': {},
+  'status': { listEmpty: true },
+  'search': { query: 'Hello' },
+  'remove': { layer: 'root', keys: ['common.farewell'], dryRun: true },
+  'move': { layer: 'root', key: 'common.greeting', newKey: 'common.hello', dryRun: true },
+  // No provider is configured here, so this is agent mode: nothing is written
+  // and the fallback contexts come back instead.
+  'translate': {},
+  'translate-key': { layer: 'root', key: 'common.greeting', sourceLocale: 'en' },
+  'check': {},
+  'orphans': {},
+  'find-duplicates': { byValue: true },
+  'scaffold': { locales: ['fr'], dryRun: true },
+}
+
+describe('every operation states the shape of its result', () => {
+  let projectDir: string
+
+  beforeAll(async () => {
+    projectDir = await mkdtemp(join(tmpdir(), 'i18n-result-schema-'))
+    await mkdir(join(projectDir, 'locales'), { recursive: true })
+    await mkdir(join(projectDir, 'src'), { recursive: true })
+    await writeFile(join(projectDir, '.i18n-mcp.json'), JSON.stringify({
+      defaultLocale: 'en',
+      localeDirs: [{ path: 'locales', layer: 'root' }],
+      // fr is declared and has no file, which is what scaffold has to answer for.
+      locales: ['en', 'de', 'fr'],
+    }))
+    await writeFile(join(projectDir, 'locales/en.json'), JSON.stringify({
+      common: { greeting: 'Hello', farewell: 'Goodbye' },
+    }))
+    // de is missing common.farewell and holds an empty greeting, so the
+    // coverage and missing-key results have every bucket filled.
+    await writeFile(join(projectDir, 'locales/de.json'), JSON.stringify({ common: { greeting: '' } }))
+    // common.farewell is referenced nowhere, so the orphan scan finds one.
+    await writeFile(join(projectDir, 'src/app.ts'), `export const label = t('common.greeting')\n`)
+  })
+
+  afterAll(async () => {
+    clearConfigCache()
+    await rm(projectDir, { recursive: true, force: true })
+  })
+
+  it('declares a result schema, so no tool is advertised without one', () => {
+    for (const descriptor of descriptors) {
+      expect(descriptor.result, `${descriptor.id}.result`).toBeDefined()
+    }
+    expect(Object.keys(RESULT_CASES).sort()).toEqual(descriptors.map(d => d.id).sort())
+  })
+
+  it.each(descriptors.map(descriptor => descriptor.id))(
+    '%s answers with a result its own schema accepts',
+    async (id) => {
+      const descriptor = descriptors.find(candidate => candidate.id === id)
+      const result = await runOperation(id, { projectDir, ...RESULT_CASES[id] })
+
+      const parsed = descriptor?.result.safeParse(result)
+
+      // The whole issue list, not just "failed": a schema that has drifted from
+      // its operation names the field it drifted on.
+      expect(parsed?.success, JSON.stringify(parsed?.error?.issues, null, 2)).toBe(true)
+    },
+  )
 })

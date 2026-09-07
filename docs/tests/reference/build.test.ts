@@ -197,6 +197,41 @@ describe('the MCP tool reference, from a fixture listing', () => {
     expect(tableRow(params, 'translations')).toContain('`Record<string, Record<string, string>>`')
   })
 
+  it('tabulates the top-level fields of a result, across every shape it can take', () => {
+    // A tool that diverts to a file answers with one of two shapes, and both are
+    // its result — so `reportFile` belongs in the same table as `results`.
+    const result = section(toolPage(buildMcp(), 'translate_missing'), '## Result')
+
+    expect([...rowNames(result)].sort()).toEqual(['reportFile', 'results', 'summary'])
+    expect(tableRow(result, 'results')).toContain('Full per-locale results.')
+  })
+
+  it('names the type of a result that is a map rather than a set of fields', () => {
+    // A table of one row called "every layer" would say less than the type does.
+    const result = section(toolPage(buildMcp(), 'list_namespaces'), '## Result')
+
+    expect(result).toContain('`Record<string, Record<string, unknown>>`')
+    expect(result).toContain('the key tree of that layer')
+    expect(rowNames(result).size).toBe(0)
+  })
+
+  it('states how a result reaches a host once, on the overview', () => {
+    const markdown = mcpOverview(buildMcp())
+
+    expect(markdown).toContain('`outputSchema`')
+    expect(markdown).toContain('`structuredContent`')
+    // Repeating it on fifteen tool pages is how the READMEs came to disagree.
+    expect(toolPage(buildMcp(), 'translate_missing')).not.toContain('`structuredContent`')
+  })
+
+  it('documents a tool that advertises no output schema without an empty section', () => {
+    const schemaless = { ...UNPAIRED_TOOL, outputSchema: undefined }
+
+    const markdown = toolPage(buildMcp(fixtureMcpSource({ tools: [schemaless] })), UNPAIRED_TOOL.name)
+
+    expect(() => section(markdown, '## Result')).toThrow()
+  })
+
   it('reports the behaviour hints a host reads, and nothing when a tool sends none', () => {
     const output = buildMcp()
     expect(section(toolPage(output, 'translate_missing'), '## Behavior Hints'))

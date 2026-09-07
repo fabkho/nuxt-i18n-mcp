@@ -14,6 +14,10 @@ prints JSON:
 { "error": { "code": "CONFIG_ERROR", "message": "…" } }
 ```
 
+Every MCP tool advertises an `outputSchema` and returns its result as
+`structuredContent` conforming to it, with the same JSON in a text block; the
+[MCP reference](https://fabkho.github.io/the-i18n-kit/reference/mcp) lists the fields each tool answers with.
+
 ## Exit Codes
 
 | Code | Means |
