@@ -157,6 +157,19 @@ importers:
         specifier: ^3.2.0
         version: 3.2.4(@types/debug@4.1.13)(@types/node@22.19.15)(jiti@2.7.0)(lightningcss@1.33.0)(terser@5.46.1)(tsx@4.23.12)(yaml@2.9.0)
 
+  packages/mcp-compat:
+    dependencies:
+      '@the-i18n-kit/mcp':
+        specifier: workspace:^
+        version: link:../mcp
+    devDependencies:
+      '@modelcontextprotocol/client':
+        specifier: ^2.0.0
+        version: 2.0.0
+      vitest:
+        specifier: ^3.2.0
+        version: 3.2.4(@types/debug@4.1.13)(@types/node@22.19.15)(jiti@2.7.0)(lightningcss@1.33.0)(terser@5.46.1)(tsx@4.23.12)(yaml@2.9.0)
+
   packages/nuxt:
     dependencies:
       '@nuxt/kit':

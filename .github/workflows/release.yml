@@ -64,6 +64,7 @@ jobs:
           # Each entry is <output key>:<package dir>:<name>.
           targets="cli:cli:@the-i18n-kit/cli mcp:mcp:@the-i18n-kit/mcp nuxt:nuxt:@the-i18n-kit/nuxt"
           targets="$targets eslint_plugin_vue:eslint-plugin-vue:@the-i18n-kit/eslint-plugin-vue"
+          targets="$targets mcp_compat:mcp-compat:the-i18n-mcp"
 
           for target in $targets; do
             pkg=${target%%:*}
@@ -117,6 +118,15 @@ jobs:
       - name: Publish @the-i18n-kit/mcp
         if: ${{ steps.targets.outputs.mcp == 'true' }}
         run: pnpm --filter @the-i18n-kit/mcp publish --no-git-checks --access public
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+      # The pre-rename alias. Published after the real package so `npx
+      # the-i18n-mcp@latest` never resolves to a version whose dependency is
+      # not on the registry yet.
+      - name: Publish the-i18n-mcp (alias)
+        if: ${{ steps.targets.outputs.mcp_compat == 'true' }}
+        run: pnpm --filter the-i18n-mcp publish --no-git-checks --access public
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 

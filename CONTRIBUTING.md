@@ -7,20 +7,23 @@ pnpm install
 pnpm build
 ```
 
-The monorepo uses pnpm workspaces with two packages:
+The monorepo uses pnpm workspaces with these packages:
 
 | Package | Description |
 |---------|-------------|
 | `packages/cli` (`@the-i18n-kit/cli`) | CLI tool for i18n management — JSON/PHP locale files, code scanning, LLM translation, config detection |
 | `packages/mcp` (`@the-i18n-kit/mcp`) | MCP server wrapping the CLI as tools for AI agents |
+| `packages/mcp-compat` (`the-i18n-mcp`) | Pre-rename alias; one file that starts `@the-i18n-kit/mcp` |
+| `packages/nuxt` (`@the-i18n-kit/nuxt`) | Nuxt module that publishes the resolved layer graph to `.nuxt/i18n-kit.json` |
+| `packages/eslint-plugin-vue` (`@the-i18n-kit/eslint-plugin-vue`) | ESLint rules for authoring idioms the scanner cannot see |
 
 ## Development
 
 ```bash
-pnpm build          # build both packages
+pnpm build          # build all packages
 pnpm test           # run all tests (CLI only)
 pnpm lint           # lint all source files
-pnpm typecheck      # build CLI + typecheck both packages
+pnpm typecheck      # build CLI + typecheck all packages
 ```
 
 To work on a single package:

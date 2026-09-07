@@ -1,0 +1,42 @@
+{
+  "name": "the-i18n-mcp",
+  "version": "10.0.0",
+  "description": "Compatibility alias for @the-i18n-kit/mcp. Install @the-i18n-kit/mcp directly; this package only forwards to it.",
+  "keywords": [
+    "mcp",
+    "mcp-server",
+    "i18n",
+    "translation",
+    "localization"
+  ],
+  "author": "Fabian Kirchhoff",
+  "license": "MIT",
+  "type": "module",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/fabkho/the-i18n-kit.git",
+    "directory": "packages/mcp-compat"
+  },
+  "bin": {
+    "the-i18n-mcp": "./bin.js",
+    "nuxt-i18n-mcp": "./bin.js"
+  },
+  "files": [
+    "bin.js"
+  ],
+  "scripts": {
+    "build": "node -e \"process.exit(0)\"",
+    "test": "vitest run",
+    "typecheck": "node -e \"process.exit(0)\""
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  },
+  "dependencies": {
+    "@the-i18n-kit/mcp": "workspace:^"
+  },
+  "devDependencies": {
+    "@modelcontextprotocol/client": "^2.0.0",
+    "vitest": "^3.2.0"
+  }
+}
