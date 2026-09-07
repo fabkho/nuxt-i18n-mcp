@@ -464,6 +464,37 @@ describe('extractKeys', () => {
       expect(usages[0].key).toBe('pages.dashboard.widgets.customerBookingPatterns.yAxisLabel')
     })
   })
+
+  /**
+   * This frontend reads the .vue files the syntax one declined, so it has to
+   * skip commented-out markup for the same reason: a key nothing renders is
+   * not a usage, and counting it keeps the key undeletable.
+   */
+  describe('commented-out markup in a .vue file', () => {
+    it('does not extract a key out of an HTML comment', () => {
+      const { usages } = extract(`<!-- {{ $t('a.dead') }} -->\n{{ $t('a.live') }}`)
+
+      expect(usages.map(u => u.key)).toEqual(['a.live'])
+    })
+
+    it('keeps the line numbers after a comment spanning several lines', () => {
+      const { usages } = extract([
+        '<!--',
+        `  {{ $t('a.dead') }}`,
+        '-->',
+        `{{ $t('a.live') }}`,
+      ].join('\n'))
+
+      expect(usages.map(u => ({ key: u.key, line: u.line }))).toEqual([{ key: 'a.live', line: 4 }])
+    })
+
+    // Only .vue is masked: another language's file keeps every line it has.
+    it('leaves comment-shaped text in another language alone', () => {
+      const { usages } = extract(`const html = '<!-- ' + t('a.live') + ' -->'`, 'a.ts')
+
+      expect(usages.map(u => u.key)).toEqual(['a.live'])
+    })
+  })
 })
 
 describe('buildDynamicKeyRegexes', () => {

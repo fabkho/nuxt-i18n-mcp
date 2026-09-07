@@ -585,6 +585,13 @@ interface OrphanScanBaseOptions {
    * report can say which protection applied.
    */
   declaredNamespaces?: string[]
+  /**
+   * Keys named by a vue-i18n linked message (`@:key.path`) in some locale's
+   * value. A link resolves inside the app's merged message table, so it
+   * vouches for its target in every layer — which layer's value carries the
+   * link, and which locale it was written in, decide nothing.
+   */
+  linkedTargets?: Set<string>
   patterns?: ScanPatternSet
   /** Set by a caller that wants to watch a scan that takes seconds. */
   progress?: OrphanScanProgress
@@ -638,6 +645,8 @@ export interface OrphanScanResult {
   ignoredCount: number
   /** Keys withheld from the orphan list by a declared namespace. Accumulated across layers. */
   declaredCount: number
+  /** Keys withheld because another message's value links to them. Accumulated across layers. */
+  linkedCount: number
   allDynamicKeys: Array<{ expression: string; file: string; line: number; callee: string }>
   dirsScanned: string[]
   unresolvedKeyWarnings: UnresolvedKeyWarning[]
@@ -676,6 +685,7 @@ export function nestedUnitIgnores(unit: ScanUnit, units: ScanUnit[]): string[] {
 export async function findOrphanKeysForConfig(options: OrphanScanOptions): Promise<OrphanScanResult> {
   const { keysByLayer, excludeDirs, resolveIgnorePatterns, patterns } = options
   const declaredRegexes = buildIgnorePatternRegexes(options.declaredNamespaces ?? [])
+  const linkedTargets = options.linkedTargets ?? new Set<string>()
 
   // Explicit scanDirs = manual scope control: one combined usage set shared
   // by all layers, no misplaced-usage detection (pre-scope-aware behavior).
@@ -766,6 +776,7 @@ export async function findOrphanKeysForConfig(options: OrphanScanOptions): Promi
   let dynamicMatchedCount = 0
   let ignoredCount = 0
   let declaredCount = 0
+  let linkedCount = 0
   const misplacedUsages: MisplacedUsage[] = []
   const scanScopeByLayer: Record<string, string[]> = {}
 
@@ -786,6 +797,12 @@ export async function findOrphanKeysForConfig(options: OrphanScanOptions): Promi
     const candidateOnly: string[] = []
     const orphans = keys.filter((k) => {
       if (scope.unique.has(k)) return false
+      // Checked ahead of the weaker nets: a link is a reference, so a key it
+      // names is not merely protected by a string that resembles it.
+      if (linkedTargets.has(k)) {
+        linkedCount++
+        return false
+      }
       if (scope.bare.has(k)) {
         // Protected, but by nothing a frontend could call a usage.
         if (!scope.dynRegexes.some(re => re.test(k))) candidateOnly.push(k)
@@ -865,6 +882,7 @@ export async function findOrphanKeysForConfig(options: OrphanScanOptions): Promi
     dynamicMatchedCount,
     ignoredCount,
     declaredCount,
+    linkedCount,
     allDynamicKeys: allDynamicKeysRaw,
     dirsScanned: units.map(u => u.dir),
     unresolvedKeyWarnings: unresolvedWarnings,

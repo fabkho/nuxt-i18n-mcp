@@ -12,6 +12,7 @@ import { readLocaleData, mutateLocaleData } from '../io/locale-data.js'
 import { getLeafKeys, removeNestedValue } from '../io/key-operations.js'
 import { scanSourceFiles, toRelativePath, findOrphanKeysForConfig, buildIgnorePatternRegexes } from '../scanner/code-scanner.js'
 import type { OrphanScanPlan, OrphanScanProgress, OrphanScanResult } from '../scanner/code-scanner.js'
+import { collectLinkedTargets } from '../scanner/linked-messages.js'
 import { getPatternSet } from '../scanner/patterns.js'
 import type { DeclaredNamespaceRef, FindOrphanKeysResult, RemoveOrphanKeysResult, CodeUsageResult, ProgressFn } from './types.js'
 import { ToolError } from '../utils/errors.js'
@@ -29,6 +30,11 @@ const DECLARED_NAMESPACE_NOTE
   = 'Keys covered by a declaredNamespaces entry. They exist by contract rather than by a call site, '
   + 'so they are never reported as orphans and never removed. A declaration with no matchedKeys covers '
   + 'nothing in this catalog — either the namespace is gone or the pattern is wrong.'
+
+const LINKED_NOTE
+  = 'Keys referenced by `@:` from another message\'s value (a vue-i18n linked message). '
+  + 'The reference resolves inside the app\'s merged message table, so it protects the key in every layer, '
+  + 'whichever layer and whichever locale the linking value lives in. These keys are never reported as orphans and never removed.'
 
 const CANDIDATE_ONLY_NOTE = 'These keys are protected only by the bare-candidate net: either a dotted string somewhere merely shares their name (often a comment or a data structure), or a call too ambiguous to commit to references them (a bare t(...) that could be anything). They are not offered for removal, but dead references hide here - verify before pruning.'
 
@@ -183,11 +189,12 @@ function scanProgress(opts: ScanProgressOptions): { progress?: OrphanScanProgres
 async function runOrphanScan(
   config: I18nConfig,
   keysByLayer: Map<string, { keys: string[]; localeDir: LocaleDir }>,
-  opts: { scanDirs?: string[]; excludeDirs?: string[]; dir: string } & ScanProgressOptions,
+  opts: { scanDirs?: string[]; excludeDirs?: string[]; dir: string; linkedTargets: Set<string> } & ScanProgressOptions,
 ): Promise<OrphanScanResult> {
   const { progress, drain } = scanProgress(opts)
   const result = await findOrphanKeysForConfig({
     keysByLayer,
+    linkedTargets: opts.linkedTargets,
     // an empty scanDirs array means "not provided" (matches excludeDirs)
     ...(opts.scanDirs?.length ? { scanDirs: opts.scanDirs } : { scanPlan: buildOrphanScanPlan(config, opts.dir) }),
     excludeDirs: opts.excludeDirs || undefined,
@@ -270,6 +277,33 @@ function buildDeclaredNamespaceRefs(
 }
 
 /**
+ * Keys named by a linked message in the checked layers.
+ *
+ * Every locale is read, not just the reference one: a link is a property of
+ * one translation's text, and a translator who wrote `@:a.b` in en-GB alone
+ * still made `a.b` live for every app that renders that message. An
+ * unreadable locale is skipped, the same as in the catalog read.
+ */
+async function collectLinkedMessageTargets(
+  config: I18nConfig,
+  layers: Iterable<string>,
+): Promise<Set<string>> {
+  const targets = new Set<string>()
+  for (const layer of layers) {
+    for (const localeDef of config.locales) {
+      let data: Record<string, unknown>
+      try {
+        data = await readLocaleData(config, layer, localeDef)
+      } catch {
+        continue
+      }
+      collectLinkedTargets(data, targets)
+    }
+  }
+  return targets
+}
+
+/**
  * Shared helper for findOrphanKeys and removeOrphanKeys.
  * Resolves the locale, filters layers, validates aliases, and builds the
  * keysByLayer Map. Returns the resolved context — or throws on invalid input.
@@ -281,6 +315,7 @@ async function resolveOrphanScanContext(
 ): Promise<{
   layersToCheck: LocaleDir[]
   keysByLayer: Map<string, { keys: string[]; localeDir: LocaleDir }>
+  linkedTargets: Set<string>
   totalKeys: number
   localeCode: string
   localeDef: LocaleDefinition
@@ -318,8 +353,9 @@ async function resolveOrphanScanContext(
   }
 
   const totalKeys = [...keysByLayer.values()].reduce((sum, v) => sum + v.keys.length, 0)
+  const linkedTargets = await collectLinkedMessageTargets(config, keysByLayer.keys())
 
-  return { layersToCheck, keysByLayer, totalKeys, localeCode, localeDef }
+  return { layersToCheck, keysByLayer, linkedTargets, totalKeys, localeCode, localeDef }
 }
 
 /**
@@ -348,7 +384,7 @@ export async function findOrphanKeys(opts: {
   const config = await detectI18nConfig(dir)
   warnUnknownOrphanScanLayers(config)
 
-  const { layersToCheck, keysByLayer, totalKeys, localeCode } = await resolveOrphanScanContext(config, {
+  const { layersToCheck, keysByLayer, linkedTargets, totalKeys, localeCode } = await resolveOrphanScanContext(config, {
     layer,
     locale,
     dir,
@@ -358,7 +394,7 @@ export async function findOrphanKeys(opts: {
     return { orphanKeys: {}, summary: { totalKeys: 0, orphanCount: 0, filesScanned: 0, message: 'No translation keys found in locale files.' } }
   }
 
-  const orphanResult = await runOrphanScan(config, keysByLayer, { scanDirs, excludeDirs, dir, progressFn, onProgressTotal })
+  const orphanResult = await runOrphanScan(config, keysByLayer, { scanDirs, excludeDirs, dir, linkedTargets, progressFn, onProgressTotal })
 
   const byLayer = orphanResult.orphansByLayer
   const allOrphanKeys: Array<{ key: string; layer: string }> = []
@@ -381,6 +417,7 @@ export async function findOrphanKeys(opts: {
     uncertainKeys: orphanResult.uncertainCount > 0 ? orphanResult.uncertainByLayer : undefined,
     candidateOnlyKeys: orphanResult.candidateOnlyCount > 0 ? orphanResult.candidateOnlyByLayer : undefined,
     candidateOnlyNote: orphanResult.candidateOnlyCount > 0 ? CANDIDATE_ONLY_NOTE : undefined,
+    linkedNote: orphanResult.linkedCount > 0 ? LINKED_NOTE : undefined,
     misplacedUsages: misplacedCount > 0 ? orphanResult.misplacedUsages : undefined,
     misplacedUsageNote: misplacedCount > 0 ? MISPLACED_USAGE_NOTE : undefined,
     declaredNamespaces,
@@ -394,6 +431,7 @@ export async function findOrphanKeys(opts: {
       dynamicMatchedCount: orphanResult.dynamicMatchedCount,
       ignoredCount: orphanResult.ignoredCount,
       declaredCount: orphanResult.declaredCount,
+      linkedCount: orphanResult.linkedCount,
       usedCount: totalKeys - orphanResult.orphanCount - orphanResult.uncertainCount - misplacedCount,
       filesScanned: orphanResult.totalFilesScanned,
       filesDeclined: orphanResult.totalFilesDeclined,
@@ -520,7 +558,7 @@ export async function removeOrphanKeys(opts: {
   warnUnknownOrphanScanLayers(config)
   const isDryRun = opts.dryRun ?? true
 
-  const { keysByLayer, totalKeys } = await resolveOrphanScanContext(config, {
+  const { keysByLayer, linkedTargets, totalKeys } = await resolveOrphanScanContext(config, {
     layer,
     locale,
     dir,
@@ -530,13 +568,14 @@ export async function removeOrphanKeys(opts: {
     return { orphanKeys: {}, removed: {}, summary: { totalKeys: 0, orphanCount: 0, message: 'No translation keys found.' } }
   }
 
-  const orphanResult = await runOrphanScan(config, keysByLayer, { scanDirs, excludeDirs, dir, progressFn, onProgressTotal })
+  const orphanResult = await runOrphanScan(config, keysByLayer, { scanDirs, excludeDirs, dir, linkedTargets, progressFn, onProgressTotal })
   const orphansByLayer = orphanResult.orphansByLayer
   const orphanCount = orphanResult.orphanCount
   const totalFilesScanned = orphanResult.totalFilesScanned
   const dynamicMatchedCount = orphanResult.dynamicMatchedCount
   const ignoredCount = orphanResult.ignoredCount
   const declaredCount = orphanResult.declaredCount
+  const linkedCount = orphanResult.linkedCount
   const misplacedCount = orphanResult.misplacedUsages.length
   const misplacedUsages = misplacedCount > 0 ? orphanResult.misplacedUsages : undefined
   const misplacedUsageNote = misplacedCount > 0 ? MISPLACED_USAGE_NOTE : undefined
@@ -550,9 +589,10 @@ export async function removeOrphanKeys(opts: {
     if (dynamicMatchedCount > 0) messageParts.push(`${dynamicMatchedCount} key(s) were excluded by dynamic pattern matching.`)
     if (ignoredCount > 0) messageParts.push(`${ignoredCount} key(s) were excluded by ignore patterns.`)
     if (declaredCount > 0) messageParts.push(`${declaredCount} key(s) were excluded by declared namespaces (see declaredNamespaces).`)
+    if (linkedCount > 0) messageParts.push(`${linkedCount} key(s) were excluded because another message's value links to them with @:.`)
     if (orphanResult.uncertainCount > 0) messageParts.push(`${orphanResult.uncertainCount} uncertain key(s) were excluded because they overlap with dynamic translation patterns.`)
     if (misplacedCount > 0) messageParts.push(`${misplacedCount} key(s) are referenced only outside their layer's scope (see misplacedUsages).`)
-    if (dynamicMatchedCount === 0 && ignoredCount === 0 && declaredCount === 0 && orphanResult.uncertainCount === 0 && misplacedCount === 0) messageParts.push('All translation keys are referenced in code.')
+    if (dynamicMatchedCount === 0 && ignoredCount === 0 && declaredCount === 0 && linkedCount === 0 && orphanResult.uncertainCount === 0 && misplacedCount === 0) messageParts.push('All translation keys are referenced in code.')
     const zeroOutput: RemoveOrphanKeysResult = {
       orphanKeys: {},
       uncertainKeys: orphanResult.uncertainCount > 0 ? orphanResult.uncertainByLayer : undefined,
@@ -560,7 +600,7 @@ export async function removeOrphanKeys(opts: {
       misplacedUsageNote,
       declaredNamespaces,
       declaredNamespaceNote,
-      summary: { totalKeys, orphanCount: 0, uncertainCount: orphanResult.uncertainCount, misplacedCount, dynamicMatchedCount, ignoredCount, declaredCount, filesScanned: totalFilesScanned, scanScope, message: messageParts.join(' ') },
+      summary: { totalKeys, orphanCount: 0, uncertainCount: orphanResult.uncertainCount, misplacedCount, dynamicMatchedCount, ignoredCount, declaredCount, linkedCount, filesScanned: totalFilesScanned, scanScope, message: messageParts.join(' ') },
     }
     return zeroOutput
   }
@@ -583,10 +623,11 @@ export async function removeOrphanKeys(opts: {
         dynamicMatchedCount,
         ignoredCount,
         declaredCount,
+        linkedCount,
         usedCount: totalKeys - orphanCount - orphanResult.uncertainCount - misplacedCount,
         filesScanned: totalFilesScanned,
         scanScope,
-        message: `Found ${orphanCount} orphan key(s) safe to remove.${orphanResult.uncertainCount > 0 ? ` ${orphanResult.uncertainCount} uncertain key(s) excluded (overlap with dynamic translation patterns).` : ''}${misplacedCount > 0 ? ` ${misplacedCount} key(s) referenced only outside their layer's scope were excluded (see misplacedUsages).` : ''} ${dynamicMatchedCount > 0 ? `${dynamicMatchedCount} key(s) matched dynamic patterns and were excluded. ` : ''}${ignoredCount > 0 ? `${ignoredCount} key(s) matched ignore patterns and were excluded. ` : ''}${declaredCount > 0 ? `${declaredCount} key(s) are covered by declared namespaces and were excluded. ` : ''}Call again with dryRun: false to remove them.`,
+        message: `Found ${orphanCount} orphan key(s) safe to remove.${orphanResult.uncertainCount > 0 ? ` ${orphanResult.uncertainCount} uncertain key(s) excluded (overlap with dynamic translation patterns).` : ''}${misplacedCount > 0 ? ` ${misplacedCount} key(s) referenced only outside their layer's scope were excluded (see misplacedUsages).` : ''} ${dynamicMatchedCount > 0 ? `${dynamicMatchedCount} key(s) matched dynamic patterns and were excluded. ` : ''}${ignoredCount > 0 ? `${ignoredCount} key(s) matched ignore patterns and were excluded. ` : ''}${declaredCount > 0 ? `${declaredCount} key(s) are covered by declared namespaces and were excluded. ` : ''}${linkedCount > 0 ? `${linkedCount} key(s) are linked from another message's value with @: and were excluded. ` : ''}Call again with dryRun: false to remove them.`,
       },
     }
     if (allDynamicKeys.length > 0) {
@@ -645,6 +686,7 @@ export async function removeOrphanKeys(opts: {
       dynamicMatchedCount,
       ignoredCount,
       declaredCount,
+      linkedCount,
       remainingCount: totalKeys - orphanCount,
       filesWritten: totalFilesWritten,
       filesScanned: totalFilesScanned,

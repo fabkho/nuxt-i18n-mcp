@@ -656,6 +656,8 @@ export interface FindOrphanKeysResult {
    */
   candidateOnlyKeys?: Record<string, string[]>
   candidateOnlyNote?: string
+  /** Why keys linked with `@:` from another message's value are not orphans. Present when any is. */
+  linkedNote?: string
   /** Keys used only from apps that do not consume the owning layer. */
   misplacedUsages?: MisplacedUsageRef[]
   misplacedUsageNote?: string
@@ -672,6 +674,8 @@ export interface FindOrphanKeysResult {
     ignoredCount?: number
     /** Keys withheld from the orphan list by a declared namespace. */
     declaredCount?: number
+    /** Keys withheld because another message's value links to them with `@:`. */
+    linkedCount?: number
     usedCount?: number
     filesScanned: number
     /** Files a syntax frontend declined; pattern matching read them instead. */
@@ -749,6 +753,8 @@ export interface RemoveOrphanKeysResult {
     ignoredCount?: number
     /** Keys withheld from the orphan list by a declared namespace. */
     declaredCount?: number
+    /** Keys withheld because another message's value links to them with `@:`. */
+    linkedCount?: number
     usedCount?: number
     remainingCount?: number
     filesScanned?: number
