@@ -21,26 +21,16 @@ Report translation keys that no source code references. Nothing is deleted unles
 | `outputFile` | `string` | no | Absolute path to write the full JSON output to. Only a compact summary is returned to the caller, which is what you want for a result too large to read in one piece. Example: ".i18n-reports/orphan-keys.json" |
 | `projectDir` | `string` | no | Absolute path to the project root. Defaults to I18N_PROJECT_DIR, then server cwd. Example: "/home/user/my-app". |
 
-## Result
+## Behavior Hints
 
-| Field | Type | Description |
-| --- | --- | --- |
-| `orphanKeys` | `Record<string, string[]>` | Layer → keys no source code of a consuming app references. The only keys remove ever deletes. |
-| `uncertainKeys` | `Record<string, string[]>` | Layer → keys with ambiguous usage evidence. Never deleted, in any mode. |
-| `misplacedUsages` | `object[]` | Keys referenced only from apps that do not consume the owning layer. Reported instead of being called orphans, and never deleted. |
-| `misplacedUsageNote` | `string` | What to do about the misplaced usages. Present alongside them. |
-| `declaredNamespaces` | `object[]` | Every declared namespace with the keys it covers — the keys this scan will not report. Present when the config declares any. |
-| `declaredNamespaceNote` | `string` | How to read the declared namespaces. Present alongside them. |
-| `dynamicKeyWarning` | `string` | Present when dynamic key expressions were found, which is when the orphan list is a candidate list rather than a verdict. |
-| `dynamicKeys` | `object[]` | Dynamic key expressions found in source, with their call sites. |
-| `unresolvedKeyWarnings` | `object[]` | Dynamic expressions that could not be resolved to concrete keys, each with an ignore pattern that would cover it. |
-| `candidateOnlyKeys` | `Record<string, string[]>` | Layer → keys kept alive only by the bare-candidate net: a dotted string somewhere shares their name, but nothing a frontend calls a usage references them. Not orphans, but where dead references hide. |
-| `candidateOnlyNote` | `string` | How to read the candidate-only keys. Present alongside them. |
-| `summary` | `object` | What the scan covered and what it found. This is what comes back when the full result is diverted to a file. |
-| `removed` | `Record<string, string[]>` | Layer → keys deleted from every locale file of that layer. |
-| `usages` | `Record<string, object[]>` | Key → its references in source. Only keys with at least one reference appear. |
-| `notFoundInCode` | `string[]` | Requested keys with no reference anywhere in the scanned source. |
-| `reportFile` | `string` | Absolute path the full JSON result was written to. Read the file for the findings; the summary below is all that came back. |
+A host reads these to decide whether a call needs your confirmation first.
+
+| Hint | Value |
+| --- | --- |
+| `readOnlyHint` | `false` |
+| `destructiveHint` | `true` |
+| `idempotentHint` | `true` |
+| `openWorldHint` | `false` |
 
 ## Paired CLI Command
 

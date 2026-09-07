@@ -141,6 +141,32 @@ describe('the operation table drives the advertised tools', () => {
     }
   })
 
+  it('advertises behaviour hints a host can auto-approve or confirm on', () => {
+    for (const descriptor of mcpDescriptors) {
+      const tool = advertised(descriptor.mcp?.name ?? '')
+      const annotations = tool.annotations ?? {}
+
+      expect(annotations, `${tool.name} declares no annotations`).toEqual(descriptor.mcp?.annotations)
+      expect(typeof annotations.readOnlyHint).toBe('boolean')
+      expect(typeof annotations.openWorldHint).toBe('boolean')
+      // A host reads an absent destructiveHint as true, so a writing tool
+      // says which it is rather than being confirmed for a scaffold.
+      if (annotations.readOnlyHint === false) {
+        expect(typeof annotations.destructiveHint, `${tool.name} writes but declares no destructiveHint`).toBe('boolean')
+      }
+    }
+  })
+
+  it('marks a tool read-only exactly when it has no parameter that writes', () => {
+    const writes = new Set(['write', 'remove', 'overwriteStale'])
+    for (const descriptor of mcpDescriptors) {
+      const readOnly = descriptor.mcp?.annotations.readOnlyHint
+      const hasWritingParam = Object.keys(descriptor.params).some(name => writes.has(name))
+      const isWriteOperation = ['write', 'remove', 'move', 'translate', 'translate-key', 'scaffold'].includes(descriptor.id)
+      expect(readOnly, `${descriptor.id}`).toBe(!hasWritingParam && !isWriteOperation)
+    }
+  })
+
   it('finds tools to check at all, so none of the above passes vacuously', () => {
     expect(tools.length).toBe(mcpDescriptors.length)
     expect(tools.length).toBeGreaterThan(1)

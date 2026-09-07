@@ -20,26 +20,16 @@ Move a translation key to another layer, to another key path, or both, carrying 
 | `dryRun` | `boolean` | no | Return the plan without writing any files. Default: false. |
 | `projectDir` | `string` | no | Absolute path to the project root. Defaults to I18N_PROJECT_DIR, then server cwd. Example: "/home/user/my-app". |
 
-## Result
+## Behavior Hints
 
-| Field | Type | Description |
-| --- | --- | --- |
-| `dryRun` | `boolean` | True when nothing was written because a plan was asked for. Absent otherwise. |
-| `wouldMove` | `object[]` | The plan, one entry per locale. Present only with dryRun. |
-| `movedLocales` | `string[]` | Locales whose value was written to the destination layer. Absent on a dry run. |
-| `deduplicatedLocales` | `string[]` | Locales where the destination already held this value, so only the source copy was dropped. |
-| `filesWritten` | `integer` | Number of locale files changed on disk. Absent on a dry run. |
-| `fromLayer` | `string` | Layer the key was moved out of. |
-| `toLayer` | `string` | Layer the key was moved into. |
-| `key` | `string` | The key as it was before the move. |
-| `newKey` | `string` | The key path it now has. Equal to key when only the layer changed. |
-| `notFoundInLocales` | `string[]` | Locales whose source layer does not define the key at all. |
-| `conflictsInLocales` | `string[]` | Locales where the destination holds a different value. Nothing is written at all when this is non-empty. |
-| `summary` | `object` | Counts of what the run did. |
-| `wouldRename` | `object[]` | The plan, one entry per locale. Present only with dryRun. |
-| `renamed` | `string[]` | Locales whose file was rewritten with the new key. Absent on a dry run. |
-| `oldKey` | `string` | The key path before the rename. |
-| `skippedDueToConflict` | `string[]` | Locales left untouched because of such a conflict. |
+A host reads these to decide whether a call needs your confirmation first.
+
+| Hint | Value |
+| --- | --- |
+| `readOnlyHint` | `false` |
+| `destructiveHint` | `true` |
+| `idempotentHint` | `false` |
+| `openWorldHint` | `false` |
 
 ## Paired CLI Command
 

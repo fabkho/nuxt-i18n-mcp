@@ -58,10 +58,6 @@ A tool parameter and the flag that reaches it carry one name — `targetLocales`
 
 `projectDir` appears on every tool.
 
-## What a Tool Returns
-
-Every tool advertises an `outputSchema` and returns its result as `structuredContent`, so a host hands its model typed data rather than a JSON blob to parse. The same JSON is sent as a text block for hosts that read only that. Each tool page lists the top-level fields of its own result.
-
 ## Diverting a Large Result
 
 [`get_missing_translations`](/reference/mcp/get_missing_translations), [`get_translation_status`](/reference/mcp/get_translation_status), [`search_translations`](/reference/mcp/search_translations), [`find_undefined_keys`](/reference/mcp/find_undefined_keys), [`find_orphan_keys`](/reference/mcp/find_orphan_keys), [`find_duplicate_keys`](/reference/mcp/find_duplicate_keys) accept `outputFile`. Given an absolute path, the tool writes its full JSON result there and returns a compact summary instead, so a result covering thousands of keys never enters the conversation.

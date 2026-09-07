@@ -17,8 +17,11 @@ List the translation key tree grouped by namespace prefix, with a count per name
 | `locale` | `string` | no | Locale code to read from (e.g., "en", "en-US"). Defaults to the project default locale. Keys are the same across locales, so one is enough. |
 | `projectDir` | `string` | no | Absolute path to the project root. Defaults to I18N_PROJECT_DIR, then server cwd. Example: "/home/user/my-app". |
 
-## Result
+## Behavior Hints
 
-| Field | Type | Description |
-| --- | --- | --- |
-| `layers` | `Record<string, object>` | One entry per scanned layer. Alias layers are skipped. |
+A host reads these to decide whether a call needs your confirmation first.
+
+| Hint | Value |
+| --- | --- |
+| `readOnlyHint` | `true` |
+| `openWorldHint` | `false` |

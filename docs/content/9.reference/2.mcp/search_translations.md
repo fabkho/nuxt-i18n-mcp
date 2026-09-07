@@ -22,14 +22,14 @@ Search translation files by key path or value, one compact row per matching key 
 | `outputFile` | `string` | no | Absolute path to write the full JSON output to. Only a compact summary is returned to the caller, which is what you want for a result too large to read in one piece. Example: ".i18n-reports/search-results.json" |
 | `projectDir` | `string` | no | Absolute path to the project root. Defaults to I18N_PROJECT_DIR, then server cwd. Example: "/home/user/my-app". |
 
-## Result
+## Behavior Hints
 
-| Field | Type | Description |
-| --- | --- | --- |
-| `matches` | `object[]` | One row per key by default; one row per key and locale when includeLocales was passed. |
-| `totalMatches` | `integer` | Number of rows in matches, whichever shape they are in. |
-| `reportFile` | `string` | Absolute path the full JSON result was written to. Read the file for the findings; the summary below is all that came back. |
-| `summary` | `object` | The counts from the full result, so a caller can act on them without reading the file. |
+A host reads these to decide whether a call needs your confirmation first.
+
+| Hint | Value |
+| --- | --- |
+| `readOnlyHint` | `true` |
+| `openWorldHint` | `false` |
 
 ## Paired CLI Command
 

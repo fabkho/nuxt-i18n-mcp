@@ -19,9 +19,14 @@ Get translation values for given key paths from a specific locale and layer. Use
 | `compact` | `boolean` | no | When true and locale is "*", returns a summary grouped by key instead of per-locale detail. Default: false. |
 | `projectDir` | `string` | no | Absolute path to the project root. Defaults to I18N_PROJECT_DIR, then server cwd. Example: "/home/user/my-app". |
 
-## Result
+## Behavior Hints
 
-`Record<string, Record<string, unknown>>` — Locale code → requested key → value. With compact and locale "*", one entry keyed "byKey" holding a digest per key instead.
+A host reads these to decide whether a call needs your confirmation first.
+
+| Hint | Value |
+| --- | --- |
+| `readOnlyHint` | `true` |
+| `openWorldHint` | `false` |
 
 ## Paired CLI Command
 

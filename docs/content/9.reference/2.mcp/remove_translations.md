@@ -18,17 +18,16 @@ Remove one or more translation keys from ALL locale files in the given layer. Us
 | `dryRun` | `boolean` | no | Return a preview of what would be removed without writing any files. Default: false. |
 | `projectDir` | `string` | no | Absolute path to the project root. Defaults to I18N_PROJECT_DIR, then server cwd. Example: "/home/user/my-app". |
 
-## Result
+## Behavior Hints
 
-| Field | Type | Description |
-| --- | --- | --- |
-| `dryRun` | `boolean` | True when nothing was removed because a preview was asked for. Absent otherwise. |
-| `wouldRemove` | `object[]` | What a dry run would remove. Present only with dryRun. |
-| `removed` | `string[]` | Dot-path keys removed from at least one locale file. Absent on a dry run. |
-| `removedPerLocale` | `string[]` | One "locale:key" entry per file-level removal. Absent on a dry run. |
-| `notFound` | `string[]` | Requested keys no locale file of the layer defined. Absent when every key existed. |
-| `filesWritten` | `integer` | Number of locale files changed on disk. Absent on a dry run. |
-| `summary` | `object` | Counts of what the run did. Absent on a dry run. |
+A host reads these to decide whether a call needs your confirmation first.
+
+| Hint | Value |
+| --- | --- |
+| `readOnlyHint` | `false` |
+| `destructiveHint` | `true` |
+| `idempotentHint` | `true` |
+| `openWorldHint` | `false` |
 
 ## Paired CLI Command
 

@@ -187,7 +187,11 @@ export const descriptors: readonly AnyOperationDescriptor[] = [
   defineOperation({
     id: 'discover',
     cli: { name: 'discover' },
-    mcp: { name: 'discover', title: 'Discover i18n Setup' },
+    mcp: {
+      name: 'discover',
+      title: 'Discover i18n Setup',
+      annotations: { readOnlyHint: true, openWorldHint: false },
+    },
     description: 'Describe the project: detected config, locale directories per layer with file counts and top-level namespaces, the layer graph, and the hand-maintained locales.',
     longDescription: 'Call this first to understand the project before reading or writing translations. The result also names the active translation mode ("provider" when the server has an env-configured LLM provider, "agent" otherwise). layerGraph answers where a new key belongs: a key used by more than one app belongs in a layer those apps share, and layerGraph.shared names those layers.',
     params: {},
@@ -204,7 +208,11 @@ export const descriptors: readonly AnyOperationDescriptor[] = [
     // which lists the top-level namespaces per layer. Stated here rather than
     // left as an absence nobody could see.
     cli: null,
-    mcp: { name: 'list_namespaces', title: 'List Namespaces' },
+    mcp: {
+      name: 'list_namespaces',
+      title: 'List Namespaces',
+      annotations: { readOnlyHint: true, openWorldHint: false },
+    },
     description: 'List the translation key tree grouped by namespace prefix, with a count per namespace node.',
     longDescription: 'Use this to explore the available keys without guessing path prefixes.',
     params: {
@@ -224,7 +232,11 @@ export const descriptors: readonly AnyOperationDescriptor[] = [
   defineOperation({
     id: 'get',
     cli: { name: 'get' },
-    mcp: { name: 'get_translations', title: 'Get Translations' },
+    mcp: {
+      name: 'get_translations',
+      title: 'Get Translations',
+      annotations: { readOnlyHint: true, openWorldHint: false },
+    },
     description: 'Get translation values for given key paths from a specific locale and layer. Use "*" as the locale to read from all locales.',
     params: {
       layer: layerRequired,
@@ -262,7 +274,13 @@ export const descriptors: readonly AnyOperationDescriptor[] = [
   defineOperation({
     id: 'write',
     cli: { name: 'write' },
-    mcp: { name: 'write_translations', title: 'Write Translations' },
+    mcp: {
+      name: 'write_translations',
+      title: 'Write Translations',
+      // Destructive because the default mode is upsert: an existing value is
+      // replaced without a trace of what it was.
+      annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: false },
+    },
     description: 'Write translation key-value pairs to a layer. Keys are inserted in alphabetical order.',
     longDescription: 'Mode "upsert" adds new keys and updates existing ones (default, most common). Mode "add" only creates new keys, skipping existing ones. Mode "update" only modifies existing keys, skipping missing ones. Use dryRun to preview without writing.',
     params: {
@@ -296,7 +314,11 @@ export const descriptors: readonly AnyOperationDescriptor[] = [
   defineOperation({
     id: 'missing',
     cli: { name: 'missing' },
-    mcp: { name: 'get_missing_translations', title: 'Get Missing Translations' },
+    mcp: {
+      name: 'get_missing_translations',
+      title: 'Get Missing Translations',
+      annotations: { readOnlyHint: true, openWorldHint: false },
+    },
     description: 'Find translation keys that exist in the reference locale but are missing in other locales. Scans a specific layer or all layers.',
     params: {
       layer: layerFilter,
@@ -344,7 +366,11 @@ export const descriptors: readonly AnyOperationDescriptor[] = [
   defineOperation({
     id: 'status',
     cli: { name: 'status' },
-    mcp: { name: 'get_translation_status', title: 'Get Translation Status' },
+    mcp: {
+      name: 'get_translation_status',
+      title: 'Get Translation Status',
+      annotations: { readOnlyHint: true, openWorldHint: false },
+    },
     description: 'Translation coverage in one call: per-locale and per-layer counts of total, translated, missing and empty keys, plus an overall completion percentage.',
     longDescription: 'Use this instead of calling get_missing_translations per layer and counting keys yourself. Empty-string values count as untranslated; set listEmpty to get the keys behind that count — they exist in the locale file, so they are never reported as missing, and they render as nothing in the UI. Locales listed in protectedLocales are reported but excluded from the overall figure, since they are maintained by hand.',
     params: {
@@ -397,7 +423,11 @@ export const descriptors: readonly AnyOperationDescriptor[] = [
   defineOperation({
     id: 'search',
     cli: { name: 'search' },
-    mcp: { name: 'search_translations', title: 'Search Translations' },
+    mcp: {
+      name: 'search_translations',
+      title: 'Search Translations',
+      annotations: { readOnlyHint: true, openWorldHint: false },
+    },
     description: 'Search translation files by key path or value, one compact row per matching key rather than one per key and locale.',
     longDescription: 'Useful for finding an existing translation before adding a duplicate of it. A key that seven layers and thirty locales define comes back as a single row: layers names every layer that defines it, which is what tells reuse from duplication, and value is the one the reference locale holds. Pass includeLocales for the detail rows — one per key and locale — when what each locale holds is the question. Matching is a case-insensitive substring unless matchMode says otherwise.',
     params: {
@@ -465,7 +495,11 @@ export const descriptors: readonly AnyOperationDescriptor[] = [
   defineOperation({
     id: 'remove',
     cli: { name: 'remove' },
-    mcp: { name: 'remove_translations', title: 'Remove Translations' },
+    mcp: {
+      name: 'remove_translations',
+      title: 'Remove Translations',
+      annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: false },
+    },
     description: 'Remove one or more translation keys from ALL locale files in the given layer.',
     longDescription: 'Use dryRun to preview the changes before applying them.',
     params: {
@@ -495,7 +529,11 @@ export const descriptors: readonly AnyOperationDescriptor[] = [
   defineOperation({
     id: 'move',
     cli: { name: 'move' },
-    mcp: { name: 'move_translation_key', title: 'Move or Rename a Translation Key' },
+    mcp: {
+      name: 'move_translation_key',
+      title: 'Move or Rename a Translation Key',
+      annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: false },
+    },
     description: 'Move a translation key to another layer, to another key path, or both, carrying every locale that defines it.',
     longDescription: 'Pass toLayer to promote an app-layer key to a shared layer once a second app needs it (or to demote a shared key that turned out to be app-specific); call discover first, layerGraph.shared names the layers more than one app consumes. Pass newKey alone to rename the key in place across every locale file of its layer. Writes nothing at all if the destination already holds the key with a different value in any locale; if it holds the same value, that locale is deduplicated instead. Use dryRun to preview the plan.',
     params: {
@@ -540,7 +578,7 @@ export const descriptors: readonly AnyOperationDescriptor[] = [
     mcp: {
       name: 'translate_missing',
       title: 'Translate Missing',
-      annotations: { title: 'Translate Missing Translations', readOnlyHint: false },
+      annotations: { title: 'Translate Missing Translations', readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
     },
     description: 'Find the keys missing in the target locales and translate them. Without a translation backend nothing is written: the result carries per-locale fallback contexts to translate by hand instead.',
     longDescription: 'Two modes: in provider mode (the server env-configured with I18N_PROVIDER, I18N_MODEL and an API key) it calls the LLM provider directly and writes the results; in agent mode it returns those fallbackContexts — translate them inline and persist via write_translations. Check the discover output for the active mode. Uses the project config (glossary, translation prompt, locale notes, examples) where there is one. Translates all locales concurrently, so pass every target locale at once.',
@@ -624,7 +662,7 @@ export const descriptors: readonly AnyOperationDescriptor[] = [
     mcp: {
       name: 'translate_key',
       title: 'Translate Key',
-      annotations: { title: 'Translate Single Key', readOnlyHint: false },
+      annotations: { title: 'Translate Single Key', readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: true },
     },
     description: 'Add or update one source translation key and translate it into the target locales.',
     longDescription: 'Unlike translate_missing, this can overwrite an existing but stale target translation. Same two modes as translate_missing: provider mode (the server env-configured) translates directly; agent mode returns a fallbackContext — translate it inline and persist via write_translations.',
@@ -690,7 +728,14 @@ export const descriptors: readonly AnyOperationDescriptor[] = [
   defineOperation({
     id: 'check',
     cli: { name: 'check' },
-    mcp: { name: 'find_undefined_keys', title: 'Find Used-But-Undefined Translation Keys' },
+    mcp: {
+      name: 'find_undefined_keys',
+      title: 'Find Used-But-Undefined Translation Keys',
+      // Hints are static and `write` is a parameter: declared for the run
+      // that writes, since a host that auto-approves the read-only shape
+      // would also auto-approve the one that seeds locale files.
+      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+    },
     description: 'Find keys referenced in source code but defined in NO locale layer the using app consumes — the direction that ships raw keys to production.',
     longDescription: 'The inverse of find_orphan_keys. Scope-aware: each scan unit (app) is checked against the layers it consumes (summary.searchedLayersByApp), so a key defined only in a layer the using app does not consume is still undefined for that app. Known limitation: extraction is line-based and static — dynamically built keys (template literals, concatenation) cannot be verified and are reported as uncertainKeys, never as hard findings. With write, the hard findings are also added to a locale file as empty translations, which is the first half of the fix; uncertain findings are never written.',
     params: {
@@ -753,7 +798,12 @@ export const descriptors: readonly AnyOperationDescriptor[] = [
   defineOperation({
     id: 'orphans',
     cli: { name: 'orphans' },
-    mcp: { name: 'find_orphan_keys', title: 'Find Orphan Translation Keys' },
+    mcp: {
+      name: 'find_orphan_keys',
+      title: 'Find Orphan Translation Keys',
+      // Declared for the `remove: true` run — the one a host must confirm.
+      annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: false },
+    },
     /**
      * Three questions about one subject, so one operation: which keys nothing
      * references, where the references that do exist are, and delete the first
@@ -867,7 +917,11 @@ export const descriptors: readonly AnyOperationDescriptor[] = [
   defineOperation({
     id: 'find-duplicates',
     cli: { name: 'find-duplicates' },
-    mcp: { name: 'find_duplicate_keys', title: 'Find Duplicate Translation Keys Across Layers' },
+    mcp: {
+      name: 'find_duplicate_keys',
+      title: 'Find Duplicate Translation Keys Across Layers',
+      annotations: { readOnlyHint: true, openWorldHint: false },
+    },
     description: 'Find translation keys defined in BOTH a shared layer and an app layer that consumes it.',
     longDescription: 'For example the same key in a monorepo root layer and in app-shop. At runtime the app layer\'s value shadows the shared one, so a collision with divergent values is the dangerous case: the shared value silently never shows. Compares one reference locale and reports each collision with both values and a divergent flag. Fix by deleting one side, never by moving.',
     params: {
@@ -916,7 +970,11 @@ export const descriptors: readonly AnyOperationDescriptor[] = [
   defineOperation({
     id: 'scaffold',
     cli: { name: 'scaffold' },
-    mcp: { name: 'scaffold_locale', title: 'Scaffold Locale' },
+    mcp: {
+      name: 'scaffold_locale',
+      title: 'Scaffold Locale',
+      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+    },
     description: 'Create empty locale files for new languages, copying the key structure of the default locale with every value set to an empty string.',
     longDescription: 'Supports both JSON (Nuxt) and PHP (Laravel) formats. Does NOT modify the framework configuration — add the locale there first, then call this.',
     params: {

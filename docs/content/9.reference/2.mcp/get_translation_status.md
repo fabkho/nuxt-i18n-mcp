@@ -19,16 +19,14 @@ Translation coverage in one call: per-locale and per-layer counts of total, tran
 | `outputFile` | `string` | no | Absolute path to write the full JSON output to. Only a compact summary is returned to the caller, which is what you want for a result too large to read in one piece. Example: ".i18n-reports/translation-status.json" |
 | `projectDir` | `string` | no | Absolute path to the project root. Defaults to I18N_PROJECT_DIR, then server cwd. Example: "/home/user/my-app". |
 
-## Result
+## Behavior Hints
 
-| Field | Type | Description |
-| --- | --- | --- |
-| `locales` | `object[]` | Coverage per locale, protected locales included and marked. |
-| `layers` | `object[]` | Coverage per layer, summed over the locales checked. |
-| `empty` | `Record<string, Record<string, string[]>>` | Locale → layer → the keys behind summary.emptyKeys. Present only when the caller asked for them. |
-| `emptyInReference` | `Record<string, string[]>` | Layer → keys whose value is empty in the reference locale itself, so there is nothing to translate from. Present only alongside empty, and only when there are any. |
-| `summary` | `object` | Project-wide coverage in one object. This is what comes back when the full result is diverted to a file. |
-| `reportFile` | `string` | Absolute path the full JSON result was written to. Read the file for the findings; the summary below is all that came back. |
+A host reads these to decide whether a call needs your confirmation first.
+
+| Hint | Value |
+| --- | --- |
+| `readOnlyHint` | `true` |
+| `openWorldHint` | `false` |
 
 ## Paired CLI Command
 

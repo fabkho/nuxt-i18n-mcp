@@ -209,11 +209,27 @@ export interface McpToolSpec {
   name: string
   /** The display title a host shows. */
   title: string
-  /** Behaviour hints a host reads. Only the translating tools declare any. */
-  annotations?: {
-    title?: string
-    readOnlyHint?: boolean
-  }
+  /**
+   * Behaviour hints a host reads before it decides whether to ask the user.
+   * Every tool declares them: a host treats an absent `destructiveHint` as
+   * true and an absent `openWorldHint` as true, so leaving them out makes a
+   * read tool look like a deletion that reaches the network. `readOnlyHint`
+   * is what lets a host auto-approve the reads; `destructiveHint` is what
+   * makes it confirm a removal but not a scaffold.
+   */
+  annotations: McpToolAnnotations
+}
+
+/** The subset of MCP tool annotations the server advertises. */
+export interface McpToolAnnotations {
+  title?: string
+  readOnlyHint: boolean
+  /** Required for a tool that writes: whether it can destroy data a user has. */
+  destructiveHint?: boolean
+  /** Whether repeating the call with the same arguments changes nothing more. */
+  idempotentHint?: boolean
+  /** Whether the tool reaches beyond the project — the translating tools call a provider. */
+  openWorldHint: boolean
 }
 
 /** How the CLI exposes an operation as a command. */
