@@ -30,12 +30,12 @@
   "main": "./dist/index.js",
   "exports": {
     ".": {
-      "import": "./dist/index.js",
-      "types": "./dist/index.d.ts"
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
     },
     "./config": {
-      "import": "./dist/define-config.js",
-      "types": "./dist/define-config.d.ts"
+      "types": "./dist/define-config.d.ts",
+      "import": "./dist/define-config.js"
     }
   },
   "files": [
@@ -46,6 +46,9 @@
     "dev": "tsdown --watch",
     "test": "vitest run",
     "typecheck": "tsc --noEmit"
+  },
+  "engines": {
+    "node": ">=20.0.0"
   },
   "dependencies": {
     "citty": "^0.2.2",
