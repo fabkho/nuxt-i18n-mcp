@@ -1,6 +1,6 @@
 {
-  "packages/cli": "8.0.1",
-  "packages/mcp": "10.0.0",
+  "packages/cli": "8.1.0",
+  "packages/mcp": "10.1.0",
   "packages/nuxt": "0.2.0",
   "packages/eslint-plugin-vue": "0.2.2"
 }

@@ -1,5 +1,12 @@
 # Changelog
 
+## [10.1.0](https://github.com/fabkho/the-i18n-kit/compare/the-i18n-kit-mcp-10.0.0...the-i18n-kit-mcp-10.1.0) (2026-09-07)
+
+
+### Features
+
+* **mcp:** every tool advertises an outputSchema and returns structuredContent ([#466](https://github.com/fabkho/the-i18n-kit/issues/466)) ([06e354b](https://github.com/fabkho/the-i18n-kit/commit/06e354bd8eeb28ede9c3c40a7f73de5c191f33e3))
+
 ## [10.0.0](https://github.com/fabkho/the-i18n-kit/compare/the-i18n-kit-mcp-9.0.0...the-i18n-kit-mcp-10.0.0) (2026-09-06)
 
 
