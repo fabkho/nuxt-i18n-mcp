@@ -24,14 +24,14 @@ export function createPatternsFrontend(pat: ScanPatternSet): LanguageFrontend {
  * Synchronous core, so the sync `extractKeys` contract the scanner suites are
  * written against keeps working unchanged.
  */
-export function readPatternSites(content: string, _filePath: string, pat: ScanPatternSet): CallSite[] {
+export function readPatternSites(content: string, filePath: string, pat: ScanPatternSet): CallSite[] {
   const sites: CallSite[] = []
   // A pattern set whose static and dynamic regexes cover the same quote style
   // (Laravel: both read double quotes) would report one call twice; the
   // frontend reports each site once.
   const seen = new Set<string>()
 
-  const lines = content.split('\n')
+  const lines = maskHtmlComments(content, filePath).split('\n')
   for (const [i, line] of lines.entries()) {
     const lineNumber = i + 1
     staticSites(line, lineNumber, pat, sites, seen)
@@ -40,6 +40,21 @@ export function readPatternSites(content: string, _filePath: string, pat: ScanPa
   }
 
   return sites
+}
+
+/**
+ * Commented-out markup is not code: a `$t('a.b')` inside `<!-- -->` must not
+ * count as a usage here either, or a file the SFC frontend declined gets the
+ * dead keys the frontend was fixed to stop reporting. Blanked rather than cut,
+ * so the line numbers this frontend reports stay the file's own.
+ *
+ * Scoped to .vue, where the two frontends have to agree. The same blind spot
+ * in an HTML-bearing PHP template is a separate question, with that language's
+ * own comment syntax to answer first.
+ */
+function maskHtmlComments(content: string, filePath: string): string {
+  if (!filePath.endsWith('.vue')) return content
+  return content.replace(/<!--[\s\S]*?-->/g, span => span.replace(/[^\n]/g, ' '))
 }
 
 function pushStatic(sites: CallSite[], seen: Set<string>, callee: string, value: string, line: number): void {

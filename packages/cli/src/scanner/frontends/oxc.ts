@@ -444,12 +444,38 @@ function scriptBlocks(content: string): VueBlock[] {
 }
 
 function templateExpressionBlocks(content: string): VueBlock[] {
+  const template = maskSpans(content, NON_TEMPLATE)
   const blocks: VueBlock[] = []
-  for (const match of content.matchAll(/\{\{([\s\S]*?)\}\}|(?:v-[a-z-]+|:[\w-]+|@[\w-]+)=(?:"([^"]*)"|'([^']*)')/g)) {
+  for (const match of template.matchAll(/\{\{([\s\S]*?)\}\}|(?:v-[a-z-]+|:[\w-]+|@[\w-]+)=(?:"([^"]*)"|'([^']*)')/g)) {
     const expression = match[1] ?? match[2] ?? match[3]
     if (!expression?.trim()) continue
     // Wrapped so a bare expression parses as a statement.
-    blocks.push({ source: `(${expression})`, lineOffset: lineOffsetAt(content, match.index ?? 0) })
+    blocks.push({ source: `(${expression})`, lineOffset: lineOffsetAt(template, match.index ?? 0) })
   }
   return blocks
+}
+
+/**
+ * Regions of an SFC that are definitely not template markup: HTML comments,
+ * and the script and style blocks whole.
+ *
+ * A commented-out `:title="$t('a.b')"` is not a usage — counted as one, it
+ * keeps a dead key alive forever, and `check --write` writes keys back out of
+ * code nobody runs. Script bodies are read by {@link scriptBlocks} from the
+ * unmasked source, so masking them here only stops the same call being read
+ * twice; masking the tags with them keeps a `<!--` inside a script string from
+ * opening a comment that swallows real template.
+ *
+ * Not an attempt to locate the root template: a nested `<template #slot>` is
+ * template like its parent, and only what cannot be is taken out.
+ */
+const NON_TEMPLATE = /<!--[\s\S]*?-->|<(script|style)[^>]*>[\s\S]*?<\/\1>/gi
+
+/**
+ * Blank out every matched span, newlines kept, so the text around it stays at
+ * the offset and line it was read from — every reported line number depends on
+ * that.
+ */
+function maskSpans(content: string, regex: RegExp): string {
+  return content.replace(regex, span => span.replace(/[^\n]/g, ' '))
 }

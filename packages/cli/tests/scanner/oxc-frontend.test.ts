@@ -206,6 +206,85 @@ describe('Vue single-file components', () => {
   })
 })
 
+/**
+ * The template regex reads the whole SFC, so everything in it that is not
+ * template has to be taken out first. Commented-out markup is the case that
+ * costs: counted as a usage it keeps a dead key alive forever, and under
+ * `check --write` it writes keys back out of code nobody runs.
+ */
+describe('what is not template', () => {
+  it('does not read a key out of an HTML comment', async () => {
+    const evidence = await scan(
+      `<template>\n  <p>{{ $t('a.live') }}</p>\n  <!-- <div :title="$t('a.dead')" /> -->\n</template>`,
+      'A.vue',
+    )
+
+    expect(evidence?.usages.map(u => u.key)).toEqual(['a.live'])
+  })
+
+  it('does not read a key out of a style block', async () => {
+    const evidence = await scan(
+      `<template><p>{{ $t('a.live') }}</p></template>\n<style>/* :label="$t('a.styled')" */</style>`,
+      'A.vue',
+    )
+
+    expect(evidence?.usages.map(u => u.key)).toEqual(['a.live'])
+  })
+
+  // Masking keeps every newline, so removing a comment cannot shift what
+  // follows it onto another line.
+  it('reports the real line of a usage that follows a comment several lines long', async () => {
+    const evidence = await scan(
+      [
+        '<template>',
+        '  <!--',
+        `    <div :title="$t('a.dead')" />`,
+        '  -->',
+        `  <p>{{ $t('a.live') }}</p>`,
+        '</template>',
+      ].join('\n'),
+      'A.vue',
+    )
+
+    expect(evidence?.usages.map(u => ({ key: u.key, line: u.line }))).toEqual([{ key: 'a.live', line: 5 }])
+  })
+
+  // A script is masked whole, so a `<!--` in one of its strings never opens a
+  // comment that would swallow the template after it. The script block itself
+  // is read from the unmasked source and must still report its key.
+  it('leaves a script block alone when a string in it looks like a comment', async () => {
+    const evidence = await scan(
+      [
+        '<script setup>',
+        `const raw = '<!-- placeholder -->'`,
+        `const label = $t('a.script')`,
+        '</script>',
+        `<template><p>{{ $t('a.template') }}</p></template>`,
+      ].join('\n'),
+      'A.vue',
+    )
+
+    expect(evidence?.usages.map(u => u.key).sort()).toEqual(['a.script', 'a.template'])
+  })
+
+  it('reads a nested template block, which is template like its parent', async () => {
+    const evidence = await scan(
+      [
+        '<template>',
+        '  <Table>',
+        '    <template #default>',
+        `      <span>{{ $t('a.cell') }}</span>`,
+        '    </template>',
+        '  </Table>',
+        '</template>',
+      ].join('\n'),
+      'A.vue',
+    )
+
+    expect(evidence?.usages.map(u => u.key)).toEqual(['a.cell'])
+  })
+})
+
 describe('declining a file', () => {
   // Declining sends the file to the pattern matcher. Returning nothing would
   // silently drop every key it contains, which is the direction that deletes
