@@ -1,6 +1,6 @@
 {
   "name": "the-i18n-mcp",
-  "version": "10.0.0",
+  "version": "10.1.0",
   "description": "Compatibility alias for @the-i18n-kit/mcp. Install @the-i18n-kit/mcp directly; this package only forwards to it.",
   "keywords": [
     "mcp",
