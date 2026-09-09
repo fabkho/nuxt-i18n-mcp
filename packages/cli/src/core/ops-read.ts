@@ -40,6 +40,8 @@ export interface PagedResult {
   truncated: boolean
   /** Where a follow-up call has to start to continue. Present only when truncated. */
   nextOffset?: number
+  /** The step after this one, as the surface the call ran on phrases it. Present when there is one. */
+  message?: string
 }
 
 /** The requested window of `items`, and whether anything was left behind it. */
@@ -205,9 +207,9 @@ export async function listLocaleDirs(projectDir?: string): Promise<LocaleDirInfo
 /**
  * One layer's answer: locale code → key → value.
  *
- * Two things the index signature cannot state: `compact` replaces the locale
- * entries with a single `byKey` one, and a read the cap cut short carries
- * `truncated: true` and `nextOffset` beside the locale codes.
+ * One thing the index signature cannot state: `compact` replaces the locale
+ * entries with a single `byKey` one. A read the cap cut short does not use
+ * this shape at all — see {@link getTranslations}.
  */
 export type GetTranslationsResult = Record<string, Record<string, unknown>>
 
@@ -312,10 +314,12 @@ export async function getTranslations(opts: {
 
   if (layer !== undefined) {
     const values = readValues(perLayer[0]?.sheets ?? [], keysByLayer.get(layer) ?? [], compact)
-    // Merged into the locale map rather than nested under it: an uncapped read
-    // has to stay byte-for-byte the answer this operation always gave, so the
-    // flag can only be a sibling of the locale codes.
-    return paging.truncated ? { ...values, ...paging } as unknown as GetTranslationsResult : values
+    // An uncapped read stays byte-for-byte the answer this operation always
+    // gave. A capped one cannot: the flat shape is locale codes all the way
+    // down, so a flag beside them would be read as a locale — it answers in
+    // the layered shape instead, which has a place for the paging fields.
+    if (!paging.truncated) return values
+    return { byLayer: { [layer]: values }, layersSearched: [layer], ...paging }
   }
 
   const byLayer: Record<string, GetTranslationsResult> = {}

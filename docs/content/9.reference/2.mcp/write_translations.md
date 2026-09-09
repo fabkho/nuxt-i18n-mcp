@@ -19,6 +19,23 @@ Write translation key-value pairs to a layer. Keys are inserted in alphabetical 
 | `dryRun` | `boolean` | no | Return a preview of what would be written without writing any files. Default: false. |
 | `projectDir` | `string` | no | Absolute path to the project root. Defaults to I18N_PROJECT_DIR, then server cwd. Example: "/home/user/my-app". |
 
+## Result
+
+| Field | Type | Description |
+| --- | --- | --- |
+| `dryRun` | `boolean` | True when nothing was written because a preview was asked for. Absent otherwise. |
+| `wouldWrite` | `object[]` | The writes a dry run would make. Present only with dryRun. |
+| `written` | `string[]` | Dot-path keys that were written. Absent on a dry run. |
+| `skipped` | `string[]` | Keys the write mode left alone — existing keys under mode "add", missing ones under mode "update". |
+| `filesWritten` | `integer` | Number of locale files changed on disk. Absent on a dry run. |
+| `warnings` | `string[]` | Non-fatal problems, e.g. a value written over a nested object. Absent when there are none. |
+| `placeholderValidation` | `object` | Placeholder comparison of the written values against the reference locale. Absent when nothing was comparable. |
+| `unresolvedLocales` | `object[]` | Locale refs that matched no known locale; their values were dropped while other locales were still written. Absent when every ref resolved. |
+| `ambiguousLocales` | `object[]` | Locale refs that matched several locales, with the one precedence picked. Absent when every ref was unambiguous. |
+| `summary` | `object` | Counts of what the run did. Absent on a dry run. |
+| `skippedKeys` | `string[]` | The keys behind keysSkipped, when the mode skipped any. Absent when nothing was skipped. |
+| `message` | `string` | The step to take next, as the surface the call ran on phrases it. Present only when there is no summary to carry it. |
+
 ## Behavior Hints
 
 A host reads these to decide whether a call needs your confirmation first.

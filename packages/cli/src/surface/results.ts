@@ -23,7 +23,7 @@ import { z } from 'zod'
 import { projectConfigSchema } from '../config/schema.js'
 import type { CheckUndefinedKeysResult } from '../core/ops-check.js'
 import type { FindDuplicateKeysResult } from '../core/ops-duplicates.js'
-import type { getTranslations, ListNamespacesResult, NamespaceNode } from '../core/ops-read.js'
+import type { DescribeProjectOutcome, getTranslations, ListNamespacesResult, MissingTranslationsPage, NamespaceNode, SearchTranslationsPage } from '../core/ops-read.js'
 import type {
   CodeUsageResult,
   DescribeProjectResult,
@@ -182,6 +182,17 @@ const codeUsageRef = z.object({
   callee: z.string().describe('The translation function the key was passed to, e.g. "t" or "$t".'),
 })
 
+/**
+ * A read that takes limit and offset says whether it left rows behind. Read
+ * the fields together: truncated says a cap applied, nextOffset is where the
+ * next call starts.
+ */
+const pagedShape = {
+  truncated: z.boolean().describe('True when limit cut the result short. The totals still count everything.'),
+  nextOffset: z.number().int().optional().describe('The offset to pass to continue where this result stopped. Present only when truncated.'),
+  message: z.string().optional().describe('The step to take next — how to continue a capped read. Present when there is one.'),
+}
+
 // ─── init ────────────────────────────────────────────────────────
 
 const generatedProjectConfig = z.object({
@@ -288,8 +299,18 @@ const i18nConfigShape = {
   locales: z.array(localeDefinition).describe('Every locale of the project.'),
   localeDirs: z.array(localeDir).describe('Every locale directory, one per layer, alias layers included.'),
   layerRootDirs: z.array(z.string()).describe('Absolute root directories of every layer, which is what source scanning walks.'),
-  projectConfig: projectConfigSchema.optional()
-    .describe('The declared config from i18n-kit.config.ts or .i18n-mcp.json, as written. Absent when the project has none.'),
+  projectConfig: z.union([
+    projectConfigSchema,
+    // A tool call gets the config without its translation prose, which the
+    // server's prompts already carry; the flag says the prose exists.
+    projectConfigSchema
+      .omit({ context: true, glossary: true, translationPrompt: true, localeNotes: true, examples: true })
+      .extend({
+        translationGuidanceOmitted: z.literal(true)
+          .describe('The translation prose (context, glossary, translationPrompt, localeNotes, examples) exists but was left out. Ask with includeTranslationGuidance for it.'),
+      }),
+  ]).optional()
+    .describe('The declared config from i18n-kit.config.ts or .i18n-mcp.json, as written — or without its translation prose, flagged. Absent when the project has none.'),
   localeFileFormat: z.enum(['json', 'php-array', 'yaml']).optional()
     .describe('Format of the locale files. Absent means the default, "json".'),
   apps: z.array(appInfo).describe('Apps and the layers each consumes — the consumer graph orphan scoping reads.'),
@@ -345,17 +366,31 @@ export const listNamespacesResult = z.object({
       ).describe('The key tree of that layer, one entry per top-level segment.'),
     }),
   ).describe('One entry per scanned layer. Alias layers are skipped.'),
+  totalNamespaces: z.number().int().describe('Top-level namespaces across every scanned layer, before limit. A namespace brings its whole subtree, so this is what limit counts.'),
+  ...pagedShape,
 })
 
 // ─── get_translations ────────────────────────────────────────────
 
-export const getTranslationsResult = z.record(
+const getTranslationsLayerResult = z.record(
   z.string().describe('Locale code, or "byKey" in compact mode.'),
   z.record(
     z.string().describe('The dot-path key as it was requested, or the key being summarised in compact mode.'),
     translationValue.describe('The value that locale holds, or null when the key is not defined there. In compact mode, a per-key digest: status ("ok" | "partial" | "missing"), totalPresent, and the locales the key is empty or missing in.'),
   ),
 ).describe('Locale code → requested key → value. With compact and locale "*", one entry keyed "byKey" holding a digest per key instead.')
+
+export const getTranslationsResult = z.union([
+  getTranslationsLayerResult,
+  z.object({
+    byLayer: z.record(
+      z.string().describe('Layer name.'),
+      getTranslationsLayerResult,
+    ).describe('One entry per layer that defines at least one of the keys, each exactly what a read of that layer alone returns.'),
+    layersSearched: z.array(z.string()).describe('Every layer that was read, the ones defining none of the keys included.'),
+    ...pagedShape,
+  }).describe('The shape a read with no layer answers with.'),
+]).describe('With a layer: locale → key → value. Without one: the same per layer that defines the keys, under byLayer.')
 
 // ─── write_translations ──────────────────────────────────────────
 
@@ -382,11 +417,13 @@ export const writeTranslationsResult = z.object({
   }).optional().describe('Counts of what the run did. Absent on a dry run.'),
   skippedKeys: z.array(z.string()).optional()
     .describe('The keys behind keysSkipped, when the mode skipped any. Absent when nothing was skipped.'),
+  message: z.string().optional().describe('The step to take next, as the surface the call ran on phrases it. Present only when there is no summary to carry it.'),
 })
 
 // ─── get_missing_translations ────────────────────────────────────
 
 export const missingTranslationsResult = z.object({
+  ...pagedShape,
   missing: keysByLocaleAndLayer
     .describe('Locale → layer → keys the reference locale defines and this locale does not. A locale with nothing missing is absent.'),
   summary: z.object({
@@ -394,6 +431,7 @@ export const missingTranslationsResult = z.object({
     targetLocales: z.array(localeRef).describe('The locales that were checked.'),
     layersScanned: z.array(z.string()).describe('Layer names the scan covered.'),
     totalMissingKeys: z.number().int().describe('Missing keys across every locale and layer. The counter the missing gate reads.'),
+    message: z.string().optional().describe('The step to take next, as the surface the call ran on phrases it. Present when there is one.'),
   }).describe('What was compared, and how much of it is missing. This is what comes back when the full result is diverted to a file.'),
 })
 
@@ -405,6 +443,8 @@ const localeStatus = localeRefInfo.extend({
   missing: z.number().int().describe('Keys absent from this locale\'s files.'),
   empty: z.number().int().describe('Keys present with an empty-string value — scaffolded and never filled. They render as nothing, and are never reported as missing.'),
   completion: z.number().describe('translated ÷ total as a percentage, 0–100.'),
+  stale: z.number().int().optional()
+    .describe('Keys whose value was written from source text that has changed since, per the translation memory. Present only when a lockfile exists; translate with overwriteStale refreshes them.'),
   protected: z.literal(true).optional()
     .describe('Present when the locale is listed in protectedLocales, so translation leaves it alone.'),
   excludedFromOverall: z.literal(true).optional()
@@ -418,6 +458,8 @@ const layerStatus = z.object({
   missing: z.number().int().describe('Of those, the ones absent from the locale file.'),
   empty: z.number().int().describe('Of those, the ones present with an empty-string value.'),
   completion: z.number().describe('translated ÷ total as a percentage, 0–100.'),
+  stale: z.number().int().optional()
+    .describe('Keys of this layer, over the locales checked, whose value was written from source text that has changed since. Present only when a translation memory lockfile exists.'),
   consumedBy: z.array(z.string())
     .describe('Apps whose declared layers include this one. Empty means either no app information exists or nothing consumes the layer.'),
 })
@@ -440,6 +482,8 @@ export const translationStatusResult = z.object({
     translatedKeys: z.number().int().describe('Of those, the ones holding a non-empty value.'),
     missingKeys: z.number().int().describe('Of those, the ones absent from their locale file.'),
     emptyKeys: z.number().int().describe('Of those, the ones present with an empty-string value.'),
+    staleCount: z.number().int().optional()
+      .describe('Of those, the ones written from source text that has changed since, per the translation memory. Present only when a lockfile exists.'),
     completionPercent: z.number().describe('Overall completion, 0–100, protected locales excluded. The counter the completion gate reads.'),
   }).describe('Project-wide coverage in one object. This is what comes back when the full result is diverted to a file.'),
 })
@@ -464,12 +508,15 @@ const searchMatch = z.object({
 export const searchTranslationsResult = z.object({
   matches: z.union([z.array(searchKeyMatch), z.array(searchMatch)])
     .describe('One row per key by default; one row per key and locale when includeLocales was passed.'),
-  totalMatches: z.number().int().describe('Number of rows in matches, whichever shape they are in.'),
+  totalMatches: z.number().int().describe('Number of rows the search found, whichever shape they are in — before limit, so it exceeds the rows in matches when truncated.'),
+  ...pagedShape,
 })
 
 /** The stand-in a diverted search returns: the count is what is left once the matches are on disk. */
 export const searchReportSummary = z.object({
   totalMatches: searchTranslationsResult.shape.totalMatches,
+  truncated: z.literal(true).optional().describe('Present when the diverted search was cut by limit.'),
+  nextOffset: pagedShape.nextOffset,
 })
 
 // ─── remove_translations ─────────────────────────────────────────
@@ -489,6 +536,7 @@ export const removeTranslationsResult = z.object({
     keysFound: z.number().int().describe('Requested keys that existed and were removed.'),
     message: z.string().describe('One sentence stating what the run did.'),
   }).optional().describe('Counts of what the run did. Absent on a dry run.'),
+  message: z.string().optional().describe('The step to take next, as the surface the call ran on phrases it. Present only when there is no summary to carry it.'),
 })
 
 // ─── move_translation_key ────────────────────────────────────────
@@ -519,6 +567,7 @@ const moveTranslationKeyResult = z.object({
   conflictsInLocales: z.array(z.string()).optional()
     .describe('Locales where the destination holds a different value. Nothing is written at all when this is non-empty.'),
   summary: moveSummary.optional().describe('Counts of what the run did.'),
+  message: z.string().optional().describe('The step to take next, as the surface the call ran on phrases it. Present only when there is no summary to carry it.'),
 })
 
 const renameTranslationKeyResult = z.object({
@@ -537,6 +586,7 @@ const renameTranslationKeyResult = z.object({
   conflictsInLocales: z.array(z.string()).optional().describe('Locales that already hold a different value under the new key.'),
   skippedDueToConflict: z.array(z.string()).optional().describe('Locales left untouched because of such a conflict.'),
   summary: moveSummary.optional().describe('Counts of what the run did.'),
+  message: z.string().optional().describe('The step to take next, as the surface the call ran on phrases it. Present only when there is no summary to carry it.'),
 })
 
 /**
@@ -753,6 +803,7 @@ const orphanScanSummaryShape = {
   dynamicMatchedCount: z.number().int().optional().describe('Keys kept alive by a dynamic key expression rather than a literal call.'),
   ignoredCount: z.number().int().optional().describe('Keys excluded by an orphanScan ignorePattern.'),
   declaredCount: z.number().int().optional().describe('Keys withheld from the orphan list by a declaredNamespaces entry.'),
+  linkedCount: z.number().int().optional().describe('Keys withheld because another message\'s value links to them with @:. Protected in every layer, never deleted.'),
   usedCount: z.number().int().optional().describe('Keys with usage evidence in a consuming app.'),
   layersChecked: z.array(z.string()).optional().describe('Layer names the scan covered.'),
   dirsScanned: z.array(z.string()).optional().describe('Directories the source scan walked.'),
@@ -784,6 +835,7 @@ export const findOrphanKeysResult = z.object({
   candidateOnlyKeys: keysByLayer.optional()
     .describe('Layer → keys kept alive only by the bare-candidate net: a dotted string somewhere shares their name, but nothing a frontend calls a usage references them. Not orphans, but where dead references hide.'),
   candidateOnlyNote: z.string().optional().describe('How to read the candidate-only keys. Present alongside them.'),
+  linkedNote: z.string().optional().describe('Why keys linked with @: from another message\'s value are not orphans. Present when any is.'),
   summary: z.object({
     ...orphanScanSummaryShape,
     orphanCount: z.number().int().describe('Keys nothing references. The counter the orphan gate reads.'),
@@ -804,7 +856,6 @@ export const removeOrphanKeysResult = z.object({
     removedCount: z.number().int().optional().describe('Keys deleted from their layer.'),
     remainingCount: z.number().int().optional().describe('Keys left in the layer after the removal.'),
     filesScanned: z.number().int().optional().describe('Source files read.'),
-    filesDeclined: z.number().int().optional().describe('Files a syntax frontend declined; pattern matching read them instead.'),
     filesWritten: z.number().int().optional().describe('Locale files changed on disk.'),
   }).describe('What the removal covered and what it deleted. This is what comes back when the full result is diverted to a file.'),
 })
@@ -907,8 +958,39 @@ export const scaffoldLocaleResult = z.object({
 /** True only when the two types are assignable to each other. */
 type Mutual<A, B> = [A] extends [B] ? ([B] extends [A] ? true : false) : false
 
+/**
+ * Assignability alone lets an optional field drift: `{ a: 1 }` and
+ * `{ a: 1, b?: 2 }` are mutually assignable, so a schema that forgot an
+ * optional field, or invented one, passed. Keys are therefore compared as
+ * well, at every object level and through arrays. A union is left to the
+ * assignability check — its members cannot be paired up structurally — so a
+ * field that is one of several shapes is exactly as checked as before.
+ */
+type IsObject<T> = T extends object ? (T extends readonly unknown[] ? false : T extends (...args: never) => unknown ? false : true) : false
+
+type IsUnion<T, U = T> = [T] extends [boolean] ? false : T extends unknown ? ([U] extends [T] ? false : true) : never
+
+/** Depth budget: a self-referencing shape (a namespace node holds nodes) would otherwise never resolve. */
+type Depth = [never, 0, 1, 2, 3, 4, 5, 6]
+
+type SameKeys<A, B, D extends number = 6> = [D] extends [never]
+  ? true
+  : true extends IsUnion<A> | IsUnion<B>
+    ? true
+    : [A] extends [readonly (infer EA)[]]
+      ? [B] extends [readonly (infer EB)[]] ? SameKeys<EA, EB, Depth[D]> : false
+      : [IsObject<A>] extends [true]
+        ? [IsObject<B>] extends [true]
+          ? [Exclude<keyof A, keyof B> | Exclude<keyof B, keyof A>] extends [never]
+            ? { [K in keyof A]-?: SameKeys<NonNullable<A[K]>, NonNullable<K extends keyof B ? B[K] : never>, Depth[D]> }[keyof A] extends true
+              ? true
+              : false
+            : false
+          : false
+        : true
+
 /** Fails to compile unless the schema and the interface describe one shape. */
-type Describes<S extends z.ZodType, T> = Mutual<z.infer<S>, T>
+type Describes<S extends z.ZodType, T> = Mutual<z.infer<S>, T> extends true ? SameKeys<z.infer<S>, T> : false
 
 type Expect<T extends true> = T
 
@@ -916,7 +998,7 @@ type _init = Expect<Describes<typeof initResult, InitProjectConfigResult>>
 // Without the server's own three fields, which no operation returns.
 type _discover = Expect<Mutual<
   Omit<z.infer<typeof discoverResult>, ServerAddedDiscoverFields>,
-  DescribeProjectResult
+  DescribeProjectOutcome
 >>
 type _namespaces = Expect<Describes<typeof listNamespacesResult, ListNamespacesResult>>
 type _namespaceNode = Expect<Describes<typeof namespaceNode, NamespaceNode>>
@@ -924,9 +1006,9 @@ type _namespaceNode = Expect<Describes<typeof namespaceNode, NamespaceNode>>
 // return type of the function itself.
 type _get = Expect<Describes<typeof getTranslationsResult, Awaited<ReturnType<typeof getTranslations>>>>
 type _write = Expect<Describes<typeof writeTranslationsResult, WriteTranslationsResult>>
-type _missing = Expect<Describes<typeof missingTranslationsResult, MissingTranslationsResult>>
+type _missing = Expect<Describes<typeof missingTranslationsResult, MissingTranslationsPage>>
 type _status = Expect<Describes<typeof translationStatusResult, TranslationStatusResult>>
-type _search = Expect<Describes<typeof searchTranslationsResult, SearchTranslationsResult>>
+type _search = Expect<Describes<typeof searchTranslationsResult, SearchTranslationsPage>>
 type _remove = Expect<Describes<typeof removeTranslationsResult, RemoveTranslationsResult>>
 type _move = Expect<Describes<typeof moveTranslationKeyResult, MoveTranslationKeyResult>>
 type _rename = Expect<Describes<typeof renameTranslationKeyResult, RenameTranslationKeyResult>>

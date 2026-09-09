@@ -21,6 +21,17 @@ Find keys referenced in source code but defined in NO locale layer the using app
 | `outputFile` | `string` | no | Absolute path to write the full JSON output to. Only a compact summary is returned to the caller, which is what you want for a result too large to read in one piece. Example: ".i18n-reports/undefined-keys.json" |
 | `projectDir` | `string` | no | Absolute path to the project root. Defaults to I18N_PROJECT_DIR, then server cwd. Example: "/home/user/my-app". |
 
+## Result
+
+| Field | Type | Description |
+| --- | --- | --- |
+| `undefinedKeys` | `object[]` | Hard findings: keys that render raw at runtime. A write run leaves them listed, because the call sites are what a reader has to visit either way. |
+| `uncertainKeys` | `object[]` | Findings static extraction cannot verify. Never written, never counted by the gate. |
+| `limitation` | `string` | What this scan cannot see, in one paragraph. Read it before acting on the uncertain findings. |
+| `written` | `object` | Present only when write was asked for and the scan found something to write. |
+| `summary` | `object` | What the scan covered and what it found. This is what comes back when the full result is diverted to a file. |
+| `reportFile` | `string` | Absolute path the full JSON result was written to. Read the file for the findings; the summary below is all that came back. |
+
 ## Behavior Hints
 
 A host reads these to decide whether a call needs your confirmation first.

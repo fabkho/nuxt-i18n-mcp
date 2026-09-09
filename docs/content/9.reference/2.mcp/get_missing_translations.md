@@ -21,6 +21,17 @@ Find translation keys that exist in the reference locale but are missing in othe
 | `outputFile` | `string` | no | Absolute path to write the full JSON output to. Only a compact summary is returned to the caller, which is what you want for a result too large to read in one piece. Example: ".i18n-reports/missing-translations.json" |
 | `projectDir` | `string` | no | Absolute path to the project root. Defaults to I18N_PROJECT_DIR, then server cwd. Example: "/home/user/my-app". |
 
+## Result
+
+| Field | Type | Description |
+| --- | --- | --- |
+| `truncated` | `boolean` | True when limit cut the result short. The totals still count everything. |
+| `nextOffset` | `integer` | The offset to pass to continue where this result stopped. Present only when truncated. |
+| `message` | `string` | The step to take next — how to continue a capped read. Present when there is one. |
+| `missing` | `Record<string, Record<string, string[]>>` | Locale → layer → keys the reference locale defines and this locale does not. A locale with nothing missing is absent. |
+| `summary` | `object` | What was compared, and how much of it is missing. This is what comes back when the full result is diverted to a file. |
+| `reportFile` | `string` | Absolute path the full JSON result was written to. Read the file for the findings; the summary below is all that came back. |
+
 ## Behavior Hints
 
 A host reads these to decide whether a call needs your confirmation first.

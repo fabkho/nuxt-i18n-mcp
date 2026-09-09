@@ -130,6 +130,8 @@ export interface WriteTranslationsResult {
     message: string
   }
   skippedKeys?: string[]
+  /** The step after this one, as the surface phrases it. Present only when there is no summary to carry it. */
+  message?: string
 }
 
 // ─── init ────────────────────────────────────────────────────────
@@ -187,6 +189,8 @@ export interface MissingTranslationsResult {
     targetLocales: Array<string | LocaleRefInfo>
     layersScanned: string[]
     totalMissingKeys: number
+    /** The step after this one, as the surface the call ran on phrases it. Present when there is one. */
+    message?: string
   }
 }
 
@@ -359,6 +363,8 @@ export interface RemoveTranslationsResult {
     keysFound: number
     message: string
   }
+  /** The step after this one, as the surface phrases it. Present only when there is no summary to carry it. */
+  message?: string
 }
 
 // ─── rename_translation_key ──────────────────────────────────────
@@ -387,6 +393,8 @@ export interface RenameTranslationKeyResult {
     message: string
     warning?: string
   }
+  /** The step after this one, as the surface phrases it. Present only when there is no summary to carry it. */
+  message?: string
 }
 
 /** What a move does to one locale's copy of the key. */
@@ -429,6 +437,8 @@ export interface MoveTranslationKeyResult {
     message: string
     warning?: string
   }
+  /** The step after this one, as the surface phrases it. Present only when there is no summary to carry it. */
+  message?: string
 }
 
 // ─── translate_missing ───────────────────────────────────────────

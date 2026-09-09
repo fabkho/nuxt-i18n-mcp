@@ -190,8 +190,11 @@ describe('getTranslations under a limit', () => {
       limit: 2,
     })
 
+    // The flat shape has no room for a flag beside the locale codes, so a
+    // capped single-layer read answers in the layered shape.
     expect(result).toEqual({
-      en: { 'auth.login.subtitle': 'Welcome back', 'auth.login.title': 'Sign in' },
+      byLayer: { root: { en: { 'auth.login.subtitle': 'Welcome back', 'auth.login.title': 'Sign in' } } },
+      layersSearched: ['root'],
       truncated: true,
       nextOffset: 2,
     })

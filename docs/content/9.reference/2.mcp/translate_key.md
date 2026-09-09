@@ -23,6 +23,26 @@ Add or update one source translation key and translate it into the target locale
 | `includePreview` | `boolean` | no | Include the translated values in the result. Default: false, which keeps the response compact. |
 | `projectDir` | `string` | no | Absolute path to the project root. Defaults to I18N_PROJECT_DIR, then server cwd. Example: "/home/user/my-app". |
 
+## Result
+
+| Field | Type | Description |
+| --- | --- | --- |
+| `key` | `string` | The key that was translated. |
+| `sourceLocale` | `object` | The locale the translation was made from. |
+| `updatedSource` | `boolean` | True when a sourceValue was written to the source locale before translating. |
+| `mode` | `"provider" \| "agent" \| "dry-run"` | How the run was executed: "provider" called the configured LLM, "agent" returned contexts to translate by hand, "dry-run" wrote nothing. |
+| `translated` | `string[]` | Locales whose value was written. |
+| `wouldTranslate` | `string[]` | Locales a dry run would translate. Present only on a dry run. |
+| `skipped` | `object[]` | Locales deliberately not translated. |
+| `failed` | `object[]` | Locales the run attempted and lost. |
+| `filesWritten` | `integer` | Number of locale files changed on disk. 0 on a dry run. |
+| `dryRun` | `boolean` | True when nothing was written because a preview was asked for. |
+| `model` | `string` | Model that produced the translations. Absent outside provider mode. |
+| `placeholderValidation` | `object` | Placeholder comparison of the new values against the source value. |
+| `preview` | `Record<string, string>` | The translated values. Present only when includePreview was passed. |
+| `fallbackContext` | `Record<string, unknown>` | Context to translate inline and persist with write_translations. Present only in agent mode. |
+| `message` | `string` | What to do next, when the run needs something from you — in agent mode, that the fallbackContext has to be translated and written back. |
+
 ## Behavior Hints
 
 A host reads these to decide whether a call needs your confirmation first.

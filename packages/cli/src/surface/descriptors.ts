@@ -298,7 +298,7 @@ export const descriptors: readonly AnyOperationDescriptor[] = [
       annotations: { readOnlyHint: true, openWorldHint: false },
     },
     description: 'Get translation values by key path or by key prefix, from one layer or from every layer that defines them. Use "*" as the locale to read from all locales.',
-    longDescription: 'Pass keys for an explicit list, or keyPrefix to read a whole namespace at once — one of the two is required, and a call with neither fails with EARG. With layer, the result is locale → key → value, exactly as it always was. Without layer, every non-alias layer is read and the result is { byLayer, layersSearched }: byLayer holds that same shape per layer and names only the layers defining at least one of the keys, which is what answers where a key lives. limit counts one key per layer read, so a prefix read of seven layers is capped across all of them rather than per layer.',
+    longDescription: 'Pass keys for an explicit list, or keyPrefix to read a whole namespace at once — one of the two is required, and a call with neither fails with EARG. With layer, the result is locale → key → value, exactly as it always was — unless limit cut it short, in which case it answers in the { byLayer } shape below, which has room for truncated and nextOffset. Without layer, every non-alias layer is read and the result is { byLayer, layersSearched }: byLayer holds that same shape per layer and names only the layers defining at least one of the keys, which is what answers where a key lives. limit counts one key per layer read, so a prefix read of seven layers is capped across all of them rather than per layer.',
     params: {
       layer: {
         ...layerFilter,

@@ -19,6 +19,16 @@ Find translation keys defined in BOTH a shared layer and an app layer that consu
 | `outputFile` | `string` | no | Absolute path to write the full JSON output to. Only a compact summary is returned to the caller, which is what you want for a result too large to read in one piece. Example: ".i18n-reports/duplicate-keys.json" |
 | `projectDir` | `string` | no | Absolute path to the project root. Defaults to I18N_PROJECT_DIR, then server cwd. Example: "/home/user/my-app". |
 
+## Result
+
+| Field | Type | Description |
+| --- | --- | --- |
+| `collisions` | `object[]` | Keys defined in both a shared layer and a layer that consumes it. |
+| `valueDuplicates` | `object[]` | Different keys carrying the same value. Present only when byValue was passed. |
+| `guidance` | `string` | How to act on the findings, in one paragraph. |
+| `summary` | `object` | What the scan compared and what it found. This is what comes back when the full result is diverted to a file. |
+| `reportFile` | `string` | Absolute path the full JSON result was written to. Read the file for the findings; the summary below is all that came back. |
+
 ## Behavior Hints
 
 A host reads these to decide whether a call needs your confirmation first.

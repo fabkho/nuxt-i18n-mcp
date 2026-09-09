@@ -19,6 +19,16 @@ List the translation key tree grouped by namespace prefix, with a count per name
 | `offset` | `integer` | no | Number of top-level namespaces to skip before returning any. Default: 0. Pass the nextOffset of a truncated result to continue where it stopped. |
 | `projectDir` | `string` | no | Absolute path to the project root. Defaults to I18N_PROJECT_DIR, then server cwd. Example: "/home/user/my-app". |
 
+## Result
+
+| Field | Type | Description |
+| --- | --- | --- |
+| `layers` | `Record<string, object>` | One entry per scanned layer. Alias layers are skipped. |
+| `totalNamespaces` | `integer` | Top-level namespaces across every scanned layer, before limit. A namespace brings its whole subtree, so this is what limit counts. |
+| `truncated` | `boolean` | True when limit cut the result short. The totals still count everything. |
+| `nextOffset` | `integer` | The offset to pass to continue where this result stopped. Present only when truncated. |
+| `message` | `string` | The step to take next — how to continue a capped read. Present when there is one. |
+
 ## Behavior Hints
 
 A host reads these to decide whether a call needs your confirmation first.
