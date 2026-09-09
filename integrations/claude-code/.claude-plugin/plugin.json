@@ -1,0 +1,18 @@
+{
+  "name": "the-i18n-kit",
+  "displayName": "the-i18n-kit",
+  "version": "0.1.0",
+  "description": "i18n toolkit integration: MCP server, guardrails against hand-edited locale files, and an undefined-keys gate before stopping.",
+  "author": {
+    "name": "Fabian Kirchhoff"
+  },
+  "homepage": "https://fabkho.github.io/the-i18n-kit/",
+  "repository": "https://github.com/fabkho/the-i18n-kit",
+  "license": "MIT",
+  "keywords": [
+    "i18n",
+    "translation",
+    "mcp",
+    "localization"
+  ]
+}

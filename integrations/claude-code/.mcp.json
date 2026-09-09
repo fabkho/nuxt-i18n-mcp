@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "the-i18n-kit": {
+      "command": "npx",
+      "args": ["-y", "@the-i18n-kit/mcp@latest"]
+    }
+  }
+}

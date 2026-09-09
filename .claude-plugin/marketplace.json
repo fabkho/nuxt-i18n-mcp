@@ -1,0 +1,14 @@
+{
+  "name": "the-i18n-kit",
+  "owner": {
+    "name": "Fabian Kirchhoff",
+    "url": "https://github.com/fabkho"
+  },
+  "plugins": [
+    {
+      "name": "the-i18n-kit",
+      "source": "./integrations/claude-code",
+      "description": "i18n toolkit for AI agents: MCP server, locale-file guardrails, undefined-keys gate."
+    }
+  ]
+}
