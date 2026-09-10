@@ -4,14 +4,16 @@ Translation coverage in a widget next to the editor, and live progress while
 `translate_missing` runs.
 
 ```
-🌐 83% · es 75% · fr 92% · 4 missing            ← work outstanding, stays put
+🌐 4 keys missing · es-ES 3 · fr-FR 1           ← when you sit down, then withdraws
 🌐 es-ES: batch 1/2 (3/6)                       ← while a translate runs
-🌐 26 keys resolved · all locales up to date    ← after it finishes, then withdraws
+🌐 22 resolved · 4 still missing                ← what moved, then withdraws
+🌐 26 keys resolved · all locales up to date    ← when a run clears the last of it
 ```
 
-Nothing missing and nothing happening means no widget. Its presence is the
-signal: on screen there is i18n work or i18n just happened, absent there is
-nothing to think about.
+The widget shows change, never state: it appears when something is happening or
+just happened, and withdraws. A line that stays put stops being read, and a
+missing count that has not moved since Tuesday is wallpaper. Standing facts live
+behind `/i18n-coverage`, which answers in full — percentages included.
 
 ## Install
 
@@ -29,10 +31,10 @@ install globally.
 
 | | |
 |---|---|
-| At session start | Reads `status --json` and shows coverage **only when keys are missing**, worst locales first. Protected locales are excluded, as they are from the overall figure |
+| At session start | Reads `status --json` and mentions outstanding work — in counts, largest gaps first — then withdraws. Nothing missing means no widget at all |
 | While a kit tool runs | Renders MCP progress notifications live — batch by batch, locale by locale |
-| After a writing tool | Refreshes coverage (debounced) — `translate_missing`, `translate_key`, `write_translations`, `remove_translations`, `move_translation_key`, `scaffold`. If that leaves nothing missing, it reports what was resolved and withdraws |
-| `/i18n-coverage` | Answers on demand, including when there is nothing to report |
+| After a writing tool | Refreshes (debounced) — `translate_missing`, `translate_key`, `write_translations`, `remove_translations`, `move_translation_key`, `scaffold` — and reports what moved: `22 resolved · 4 still missing`, or `26 keys resolved · all locales up to date` |
+| `/i18n-coverage` | The full picture on demand, percentages and per-locale detail, including when there is nothing to report |
 
 Live progress needs a pi-mcp-adapter that bridges MCP progress notifications to
 tool updates. Without it the coverage line still works; only the progress line

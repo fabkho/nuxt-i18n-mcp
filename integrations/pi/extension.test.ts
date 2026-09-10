@@ -14,7 +14,7 @@ import { mkdtempSync, mkdirSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
-import extension, { formatCoverage, formatProgress } from "./extension.ts";
+import extension, { formatCoverage, formatOutstanding, formatProgress } from "./extension.ts";
 
 /** anny-ui at rest: a quarter million keys, nothing missing. */
 const COMPLETE = {
@@ -35,6 +35,50 @@ const ONE_KEY_SHORT = {
   ],
   summary: { completionPercent: 100, missingKeys: 26, totalKeys: 226486, translatedKeys: 226460 },
 };
+
+/** anny-ui's real shape: 26 locales, one key short each. */
+const ONE_KEY_SHORT_WIDE = {
+  locales: Array.from({ length: 26 }, (_, index) => ({
+    code: `l${index}`,
+    completion: 100,
+    missing: 1,
+    total: 8711,
+    translated: 8710,
+  })),
+  summary: { completionPercent: 100, missingKeys: 26, totalKeys: 226486, translatedKeys: 226460 },
+};
+
+describe("formatOutstanding", () => {
+  it("leads with counts, not percentages", () => {
+    const line = formatOutstanding({
+      locales: [
+        { code: "es-ES", completion: 75, missing: 3, total: 12, translated: 9 },
+        { code: "fr-FR", completion: 91.7, missing: 1, total: 12, translated: 11 },
+      ],
+      summary: { completionPercent: 83.3, missingKeys: 4, totalKeys: 24, translatedKeys: 20 },
+    });
+    expect(line).toBe("🌐 4 keys missing · es-ES 3 · fr-FR 1");
+    expect(line).not.toContain("%");
+  });
+
+  it("counts locales instead of naming them when the gaps are spread thin", () => {
+    // anny-ui: one key added to the reference locale, missing in 26 others.
+    expect(formatOutstanding(ONE_KEY_SHORT_WIDE)).toBe("🌐 26 keys missing · 26 locales");
+  });
+
+  it("keeps singular nouns singular", () => {
+    expect(
+      formatOutstanding({
+        locales: [{ code: "fr-FR", missing: 1 }],
+        summary: { missingKeys: 1 },
+      }),
+    ).toBe("🌐 1 key missing · fr-FR 1");
+  });
+
+  it("has nothing to report when nothing is missing", () => {
+    expect(formatOutstanding(COMPLETE)).toBeUndefined();
+  });
+});
 
 describe("formatCoverage", () => {
   it("describes the settled state without claiming an event happened", () => {
@@ -146,10 +190,33 @@ describe("event flow", () => {
     await vi.waitFor(() => expect(lines).toEqual([undefined]));
   });
 
-  it("shows outstanding work at session start", async () => {
-    const { fire, lines } = harness(projectDir(), [JSON.stringify(ONE_KEY_SHORT)]);
+  it("mentions outstanding work at session start, then withdraws", async () => {
+    vi.stubEnv("I18N_KIT_WIDGET_LINGER_MS", "300");
+    const { fire, lines } = harness(projectDir(), [JSON.stringify(ONE_KEY_SHORT_WIDE)]);
     await fire("session_start", {});
-    await vi.waitFor(() => expect(lines[0]).toContain("26 missing"));
+    await vi.waitFor(() => expect(lines[0]).toBe("🌐 26 keys missing · 26 locales"));
+    await vi.waitFor(() => expect(lines.at(-1)).toBeUndefined(), { timeout: 5_000 });
+    vi.unstubAllEnvs();
+  });
+
+  it("reports a partial resolution as what moved and what is left", async () => {
+    vi.stubEnv("I18N_KIT_WIDGET_LINGER_MS", "300");
+    const partial = {
+      locales: [{ code: "fr-FR", missing: 4, completion: 90 }],
+      summary: { missingKeys: 4, completionPercent: 90, totalKeys: 40, translatedKeys: 36 },
+    };
+    const { fire, lines } = harness(projectDir(), [JSON.stringify(ONE_KEY_SHORT_WIDE), JSON.stringify(partial)]);
+    await fire("session_start", {});
+    await vi.waitFor(() => expect(lines[0]).toContain("26 keys missing"));
+
+    await fire("tool_execution_end", {
+      toolName: "mcp",
+      isError: false,
+      result: { content: [], details: { mode: "call", server: "the-i18n-mcp", tool: "translate_missing" } },
+    });
+
+    await vi.waitFor(() => expect(lines).toContain("🌐 22 resolved · 4 still missing"), { timeout: 5_000 });
+    vi.unstubAllEnvs();
   });
 
   it("stays quiet outside an i18n-kit project", async () => {
@@ -171,8 +238,10 @@ describe("event flow", () => {
       result: { content: [], details: { mode: "call", server: "the-i18n-mcp", tool: "write_translations" } },
     });
 
-    await vi.waitFor(() => expect(lines.length).toBe(2), { timeout: 5_000 });
-    expect(lines[1]).toContain("26 missing");
+    await vi.waitFor(
+      () => expect(lines.some((line) => line?.includes("26 keys missing"))).toBe(true),
+      { timeout: 5_000 },
+    );
   });
 
   it("ignores tools that cannot change coverage", async () => {
@@ -195,7 +264,7 @@ describe("event flow", () => {
     const { fire, lines } = harness(projectDir(), [JSON.stringify(ONE_KEY_SHORT), JSON.stringify(COMPLETE)]);
 
     await fire("session_start", {});
-    await vi.waitFor(() => expect(lines[0]).toContain("26 missing"));
+    await vi.waitFor(() => expect(lines[0]).toContain("26 keys missing"));
 
     await fire("tool_execution_end", {
       toolName: "mcp",
@@ -203,7 +272,10 @@ describe("event flow", () => {
       result: { content: [], details: { mode: "call", server: "the-i18n-mcp", tool: "translate_missing" } },
     });
 
-    await vi.waitFor(() => expect(lines[1]).toBe("🌐 26 keys resolved · all locales up to date"), { timeout: 5_000 });
+    await vi.waitFor(
+      () => expect(lines).toContain("🌐 26 keys resolved · all locales up to date"),
+      { timeout: 5_000 },
+    );
     // and then it gets out of the way
     await vi.waitFor(() => expect(lines.at(-1)).toBeUndefined(), { timeout: 5_000 });
     vi.unstubAllEnvs();
@@ -216,7 +288,7 @@ describe("event flow", () => {
     await vi.waitFor(() => expect(lines).toEqual([undefined]));
 
     await command();
-    await vi.waitFor(() => expect(lines[1]).toBe("🌐 all locales up to date"));
+    await vi.waitFor(() => expect(lines).toContain("🌐 all locales up to date"));
     await vi.waitFor(() => expect(lines.at(-1)).toBeUndefined(), { timeout: 5_000 });
     vi.unstubAllEnvs();
   });

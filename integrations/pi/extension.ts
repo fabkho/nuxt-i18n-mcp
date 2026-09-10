@@ -157,7 +157,41 @@ function localePercent(locale: LocaleStatus): number {
   return formatPercent(locale.completion ?? 0);
 }
 
+/** `1 key` / `26 keys`, so a line never reads "1 keys". */
+function count(n: number, noun: string): string {
+  return `${n} ${noun}${n === 1 ? "" : "s"}`;
+}
+
 /**
+ * What is outstanding, in counts.
+ *
+ * Percentages are left to the on-demand detail: in a large project coverage is
+ * pinned near 100 and moves in the third decimal, so a percentage looks like a
+ * gauge while behaving like a constant — and per-locale percentages are worse,
+ * since twenty locales one key short all read the same. The count is the part
+ * you would act on.
+ *
+ * `🌐 4 keys missing · es-ES 3 · fr-FR 1`, or, when the gaps are spread too
+ * thin to name, `🌐 26 keys missing · 26 locales`.
+ */
+export function formatOutstanding(status: StatusResult): string | undefined {
+  const missing = status.summary?.missingKeys ?? 0;
+  if (missing === 0) return undefined;
+
+  const incomplete = (status.locales ?? [])
+    .filter((locale) => locale.excludedFromOverall !== true && (locale.missing ?? 0) > 0)
+    .sort((a, b) => (b.missing ?? 0) - (a.missing ?? 0));
+
+  if (incomplete.length === 0) return `🌐 ${count(missing, "key")} missing`;
+  if (incomplete.length > MAX_LISTED_LOCALES) {
+    return `🌐 ${count(missing, "key")} missing · ${count(incomplete.length, "locale")}`;
+  }
+  const perLocale = incomplete.map((locale) => `${locale.code} ${locale.missing}`).join(" · ");
+  return `🌐 ${count(missing, "key")} missing · ${perLocale}`;
+}
+
+/**
+ * The detailed answer, percentages included, for when you ask outright:
  * `🌐 83% · es 75% · fr 92% · 4 missing`, worst locales first so a project with
  * twenty locales still says something useful in one line. Protected locales are
  * hand-maintained and excluded from the overall figure, so they are not listed.
@@ -232,28 +266,44 @@ export default function i18nKitWidget(pi: ExtensionAPI): void {
   /**
    * What to display once a status read lands.
    *
-   * Outstanding work stays on screen, because it is a standing fact about the
-   * project. "Nothing missing" is not: at session start it is the ordinary case
-   * and says nothing worth a permanent line, so the widget keeps quiet. After a
-   * tool ran, or when asked outright, it answers — briefly — because then the
-   * absence of work is news.
+   * Nothing persists. A line that stays put stops being read — that is true of
+   * "all locales up to date" and equally true of a missing count that has not
+   * moved since Tuesday. So the widget reports change and then withdraws:
+   * outstanding work is news when you sit down, and wallpaper a minute later.
+   * Standing facts live behind /i18n-coverage, which answers in full.
    */
   const present = (ctx: ExtensionContext, status: StatusResult, reason: Reason) => {
     const missing = status.summary?.missingKeys ?? 0;
     const previous = lastMissing;
     lastMissing = missing;
 
-    if (missing > 0) {
-      clearLinger();
-      setLine(ctx, formatCoverage(status));
+    if (reason === "command") {
+      const line = formatCoverage(status);
+      if (line) showTransient(ctx, line);
       return;
     }
-    if (reason === "session-start") {
-      setLine(ctx, undefined);
+
+    if (missing === 0) {
+      // At session start this is the ordinary case, and ordinary is not news.
+      if (reason === "session-start") {
+        setLine(ctx, undefined);
+        return;
+      }
+      const resolved = previous !== undefined && previous > 0 ? previous : 0;
+      showTransient(
+        ctx,
+        resolved > 0 ? `🌐 ${count(resolved, "key")} resolved · all locales up to date` : "🌐 all locales up to date",
+      );
       return;
     }
-    const resolved = previous !== undefined && previous > 0 ? previous : 0;
-    showTransient(ctx, resolved > 0 ? `🌐 ${resolved} keys resolved · all locales up to date` : "🌐 all locales up to date");
+
+    if (reason === "activity" && previous !== undefined && previous > missing) {
+      showTransient(ctx, `🌐 ${previous - missing} resolved · ${missing} still missing`);
+      return;
+    }
+
+    const outstanding = formatOutstanding(status);
+    if (outstanding) showTransient(ctx, outstanding);
   };
 
   const refresh = async (ctx: ExtensionContext, reason: Reason) => {
