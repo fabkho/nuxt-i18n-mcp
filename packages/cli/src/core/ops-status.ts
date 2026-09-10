@@ -8,6 +8,8 @@ import { detectI18nConfig } from '../config/detector.js'
 import { buildLayerGraph } from '../config/layer-graph.js'
 import { readLocaleData, readLocaleDataIfPresent } from '../io/locale-data.js'
 import { getNestedValue, getLeafKeys } from '../io/key-operations.js'
+import { toErrorMessage } from '../utils/errors.js'
+import { log } from '../utils/logger.js'
 import { findReferenceLocaleOrThrow, localeRefInfo, resolveLayersToScan } from './shared.js'
 import { resolveProtectedLocales } from './ops-translate.js'
 import { collectEmptyTranslations } from './ops-read.js'
@@ -304,6 +306,12 @@ async function listEmptyKeys(
   }
 }
 
+/**
+ * One target locale's keys in one layer. A locale with no file in this layer
+ * is entirely missing rather than an error, and an unreadable file counts the
+ * same way — coverage for the other locales is still worth reporting, so long
+ * as the file that could not be read is named.
+ */
 async function readTargetData(
   config: I18nConfig,
   layer: string,
@@ -312,8 +320,8 @@ async function readTargetData(
   try {
     return await readLocaleData(config, layer, target)
   }
-  catch {
-    // A locale with no file in this layer is entirely missing, not an error.
+  catch (err) {
+    log.warn(`Cannot read locale '${target.code}' of layer '${layer}' — counted as untranslated: ${toErrorMessage(err)}`)
     return {}
   }
 }

@@ -334,7 +334,10 @@ export async function translateMissing(opts: TranslateMissingOptions): Promise<T
       let scanData: Record<string, unknown> = {}
       try {
         scanData = await readLocaleData(config, layer, target)
-      } catch {}
+      }
+      catch (err) {
+        log.warn(`Cannot read locale '${target.code}' of layer '${layer}' for the progress pre-scan: ${toErrorMessage(err)}`)
+      }
       preScanCounts.push(missingKeysIn(scanData).length
         + (overwriteStale ? staleKeysIn(scanData, target.code).length : 0))
     }
@@ -356,7 +359,12 @@ export async function translateMissing(opts: TranslateMissingOptions): Promise<T
     let targetData: Record<string, unknown> = {}
     try {
       targetData = await readLocaleData(config, layer, target)
-    } catch {}
+    }
+    catch (err) {
+      // Every key then reads as missing for this locale; the write that follows
+      // re-reads the same file and fails there rather than here.
+      log.warn(`Cannot read locale '${target.code}' of layer '${layer}': ${toErrorMessage(err)}`)
+    }
     targetDataCache.set(target.code, targetData)
   }
 

@@ -449,8 +449,11 @@ function buildDeclaredNamespaceRefs(
  *
  * Every locale is read, not just the reference one: a link is a property of
  * one translation's text, and a translator who wrote `@:a.b` in en-GB alone
- * still made `a.b` live for every app that renders that message. An
- * unreadable locale is skipped, the same as in the catalog read.
+ * still made `a.b` live for every app that renders that message.
+ *
+ * A locale with no file in the layer reads as no links. A file that cannot be
+ * read throws: this set is what keeps linked keys out of the orphan list, and
+ * a link nobody could see would surface the key as safe to delete.
  */
 async function collectLinkedMessageTargets(
   config: I18nConfig,
@@ -459,13 +462,7 @@ async function collectLinkedMessageTargets(
   const targets = new Set<string>()
   for (const layer of layers) {
     for (const localeDef of config.locales) {
-      let data: Record<string, unknown>
-      try {
-        data = await readLocaleData(config, layer, localeDef)
-      } catch {
-        continue
-      }
-      collectLinkedTargets(data, targets)
+      collectLinkedTargets(await readLocaleData(config, layer, localeDef), targets)
     }
   }
   return targets
@@ -501,14 +498,12 @@ async function resolveOrphanScanContext(
     )
   }
 
+  // The catalog every orphan verdict is computed against. A layer without the
+  // reference locale contributes no keys; a layer whose file cannot be read
+  // throws, because "no keys here" is what makes a key an orphan.
   const keysByLayer = new Map<string, { keys: string[]; localeDir: LocaleDir }>()
   for (const ld of layersToCheck) {
-    let data: Record<string, unknown>
-    try {
-      data = await readLocaleData(config, ld.layer, localeDef)
-    } catch {
-      continue
-    }
+    const data = await readLocaleData(config, ld.layer, localeDef)
     if (Object.keys(data).length === 0) continue
     keysByLayer.set(ld.layer, { keys: getLeafKeys(data), localeDir: ld })
   }
@@ -816,16 +811,14 @@ export async function removeOrphanKeys(opts: {
     if (ld.aliasOf) continue
 
     for (const localeDef2 of config.locales) {
-      try {
-        const written = await mutateLocaleData(config, layerName, localeDef2, (fileData) => {
-          for (const key of orphans) {
-            removeNestedValue(fileData, key)
-          }
-        })
-        totalFilesWritten += written.size
-      } catch {
-        continue
-      }
+      // Not tolerated: a locale whose file failed to rewrite would be reported
+      // as having had its orphans removed.
+      const written = await mutateLocaleData(config, layerName, localeDef2, (fileData) => {
+        for (const key of orphans) {
+          removeNestedValue(fileData, key)
+        }
+      })
+      totalFilesWritten += written.size
     }
 
     removedByLayer[layerName] = orphans

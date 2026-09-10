@@ -13,7 +13,8 @@ import type { I18nConfig, ProjectConfig } from '../config/types.js'
 import { readLocaleData, readLocaleDataIfPresent, resolveLocaleEntries } from '../io/locale-data.js'
 import { getFormat } from '../io/formats.js'
 import { getNestedValue, getLeafKeys } from '../io/key-operations.js'
-import { ToolError } from '../utils/errors.js'
+import { ToolError, toErrorMessage } from '../utils/errors.js'
+import { log } from '../utils/logger.js'
 
 import type { LocaleRefInfo } from './types.js'
 import { ALL_LAYERS, findReferenceLocaleOrThrow, findLocaleImpl, localeRefInfo, resolveLayersToScan } from './shared.js'
@@ -184,8 +185,11 @@ export async function listLocaleDirs(projectDir?: string): Promise<LocaleDirInfo
     // A namespaced layout counts directories and reports the namespaces in
     // one; a flat one counts locale files and reports the keys in one.
     if (format.defaultLayout === 'namespaced') {
+      // An inventory keeps listing the layers it could read. Every unreadable
+      // one is named on stderr instead, so a zero count is never a silence.
       let subDirs: string[] = []
-      try { subDirs = await readdir(localeDir.path) } catch {}
+      try { subDirs = await readdir(localeDir.path) }
+      catch (err) { log.warn(`Cannot list locale directory ${localeDir.path}: ${toErrorMessage(err)}`) }
 
       const sampleLocale = config.locales[0]
       let namespaces: string[] = []
@@ -193,7 +197,8 @@ export async function listLocaleDirs(projectDir?: string): Promise<LocaleDirInfo
         try {
           const entries = await resolveLocaleEntries(config, localeDir.layer, sampleLocale)
           namespaces = entries.map(e => e.namespace).filter((n): n is string => n !== null)
-        } catch {}
+        }
+        catch (err) { log.warn(`Cannot list the namespaces of layer '${localeDir.layer}' (${localeDir.path}): ${toErrorMessage(err)}`) }
       }
 
       results.push({
@@ -212,7 +217,8 @@ export async function listLocaleDirs(projectDir?: string): Promise<LocaleDirInfo
         try {
           const data = await readLocaleData(config, localeDir.layer, sampleLocale)
           topLevelKeys = Object.keys(data)
-        } catch {}
+        }
+        catch (err) { log.warn(`Cannot read locale '${sampleLocale.code}' of layer '${localeDir.layer}': ${toErrorMessage(err)}`) }
       }
 
       results.push({
@@ -501,7 +507,12 @@ export async function getMissingTranslations(opts: {
 
       try {
         targetData = await readLocaleData(config, localeDir.layer, target)
-      } catch {}
+      }
+      catch (err) {
+        // Every reference key then counts as missing for this locale, which
+        // over-reports rather than hiding the file — as long as it is named.
+        log.warn(`Cannot read locale '${target.code}' of layer '${localeDir.layer}': ${toErrorMessage(err)}`)
+      }
 
       const missing = refKeys.filter(k => {
         const v = getNestedValue(targetData, k)
@@ -938,7 +949,8 @@ export async function listNamespaces(opts: {
     try {
       data = await readLocaleData(config, ld.layer, localeToUse)
     }
-    catch {
+    catch (err) {
+      log.warn(`Cannot read locale '${localeToUse.code}' of layer '${ld.layer}' — its namespaces are left out: ${toErrorMessage(err)}`)
       continue
     }
 

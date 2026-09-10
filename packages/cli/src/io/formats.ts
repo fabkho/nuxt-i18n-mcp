@@ -13,7 +13,7 @@
 import { readdir } from 'node:fs/promises'
 import { extname, join } from 'node:path'
 import type { LocaleFileFormat } from '../adapters/types.js'
-import { ConfigError, FileIOError } from '../utils/errors.js'
+import { ConfigError, FileIOError, toErrorMessage } from '../utils/errors.js'
 import { log } from '../utils/logger.js'
 
 import { readLocaleFile, clearFileCache, clearFileCacheEntry } from './json-reader.js'
@@ -110,7 +110,8 @@ export async function detectFormatInDir(localeDir: string): Promise<LocaleFileFo
   try {
     entries = await readdir(localeDir, { withFileTypes: true })
   }
-  catch {
+  catch (error) {
+    log.debug(`Cannot list ${localeDir} to detect its locale file format: ${toErrorMessage(error)}`)
     return null
   }
 
