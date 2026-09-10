@@ -164,6 +164,122 @@ function truncateDetail(detail: string): string {
   return detail.length > 60 ? `${detail.slice(0, 57)}…` : detail;
 }
 
+/** Source files whose edits can introduce a key that no locale defines. */
+const SOURCE_EXTENSIONS = new Set([
+  ".vue", ".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs", ".svelte", ".astro", ".php", ".blade.php", ".py", ".rb",
+]);
+
+/** Built-in pi tools that write files. */
+const EDIT_TOOLS = ["write", "edit", "multiedit", "apply_patch", "str_replace"];
+
+/**
+ * What a translate run actually did, read from the tool's own result.
+ *
+ * The status re-read that follows knows only how the totals moved; the result
+ * knows which locales moved, which translations dropped a placeholder, and
+ * which locales were left alone on purpose. Those are the parts worth saying.
+ */
+export interface TranslateReport {
+  perLocale: { code: string; translated: number }[];
+  placeholderIssues: { locale: string; key: string; missing: string[] }[];
+  protectedLocales: string[];
+}
+
+interface RawLocaleResult {
+  translated?: unknown;
+  skipped?: unknown;
+  placeholderValidation?: { errors?: unknown };
+}
+
+/**
+ * Pull the report out of an MCP tool result.
+ *
+ * The result arrives as JSON in a text block, which may have been truncated by
+ * the host's output guard, so every step tolerates absence: a report is a
+ * bonus on top of the status re-read, never the thing the widget depends on.
+ */
+export function parseTranslateReport(text: string): TranslateReport | undefined {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(text);
+  } catch {
+    return undefined;
+  }
+  const layers = (parsed as { layers?: Record<string, { results?: Record<string, RawLocaleResult> }> })?.layers;
+  if (!layers || typeof layers !== "object") return undefined;
+
+  const perLocale = new Map<string, number>();
+  const placeholderIssues: TranslateReport["placeholderIssues"] = [];
+  const protectedLocales = new Set<string>();
+
+  for (const layer of Object.values(layers)) {
+    for (const [locale, result] of Object.entries(layer?.results ?? {})) {
+      const translated = Array.isArray(result?.translated) ? result.translated.length : 0;
+      if (translated > 0) perLocale.set(locale, (perLocale.get(locale) ?? 0) + translated);
+
+      for (const entry of Array.isArray(result?.skipped) ? result.skipped : []) {
+        if ((entry as { reason?: string })?.reason === "protected-locale") protectedLocales.add(locale);
+      }
+      for (const issue of Array.isArray(result?.placeholderValidation?.errors)
+        ? (result.placeholderValidation?.errors as { locale?: string; key?: string; missing?: unknown }[])
+        : []) {
+        placeholderIssues.push({
+          locale: issue.locale ?? locale,
+          key: issue.key ?? "",
+          missing: Array.isArray(issue.missing) ? issue.missing.map(String) : [],
+        });
+      }
+    }
+  }
+
+  if (perLocale.size === 0 && placeholderIssues.length === 0 && protectedLocales.size === 0) return undefined;
+  return {
+    perLocale: [...perLocale.entries()]
+      .map(([code, translated]) => ({ code, translated }))
+      .sort((a, b) => b.translated - a.translated),
+    placeholderIssues,
+    protectedLocales: [...protectedLocales],
+  };
+}
+
+/**
+ * `🌐 es-ES +3 · fr-FR +1 · ⚠ fr-FR dropped {count} · 3 protected, skipped`
+ *
+ * Which locales moved, rather than a bare total: the same width, and it answers
+ * "did the one I care about get done" without a second call.
+ */
+export function formatTranslateReport(report: TranslateReport, stillMissing: number): string | undefined {
+  const parts: string[] = [];
+  for (const locale of report.perLocale.slice(0, MAX_LISTED_LOCALES)) {
+    parts.push(`${locale.code} +${locale.translated}`);
+  }
+  const rest = report.perLocale.length - MAX_LISTED_LOCALES;
+  if (rest > 0) parts.push(`+${count(rest, "locale")} more`);
+
+  // A dropped placeholder is a broken string in front of a user, so it is named.
+  const [issue] = report.placeholderIssues;
+  if (issue) {
+    const dropped = issue.missing.length > 0 ? ` ${issue.missing.join(", ")}` : "";
+    const more = report.placeholderIssues.length - 1;
+    parts.push(`⚠ ${issue.locale} dropped${dropped}${more > 0 ? ` (+${more})` : ""}`);
+  }
+  // Protected locales are refused by design; unexplained, that reads as failure.
+  if (report.protectedLocales.length > 0) {
+    parts.push(`${count(report.protectedLocales.length, "locale")} protected, skipped`);
+  }
+  if (stillMissing > 0) parts.push(`${stillMissing} still missing`);
+  if (parts.length === 0) return undefined;
+  return `🌐 ${parts.join(" · ")}`;
+}
+
+/** `🌐 2 undefined keys · checkout.payNow, cart.empty` */
+export function formatUndefinedKeys(keys: string[]): string | undefined {
+  if (keys.length === 0) return undefined;
+  const named = keys.slice(0, 3).join(", ");
+  const more = keys.length - 3;
+  return `🌐 ${count(keys.length, "undefined key")} · ${named}${more > 0 ? ` +${more}` : ""}`;
+}
+
 /** `1 key` / `26 keys`, so a line never reads "1 keys". */
 function count(n: number, noun: string): string {
   return `${n} ${noun}${n === 1 ? "" : "s"}`;
@@ -380,6 +496,10 @@ export default function i18nKitWidget(pi: ExtensionAPI): void {
   /** Missing keys as of the last successful read, for reporting what changed. */
   let lastMissing: number | undefined;
   let reportedUnavailable = false;
+  /** The last translate run's own account of itself, awaiting the status re-read. */
+  let pendingReport: TranslateReport | undefined;
+  /** Whether this turn edited anything that can reference a translation key. */
+  let sourceTouched = false;
   const placement = process.env.I18N_KIT_WIDGET_PLACEMENT === "aboveEditor" ? "aboveEditor" : "belowEditor";
 
   let state: WidgetState | undefined;
@@ -483,6 +603,16 @@ export default function i18nKitWidget(pi: ExtensionAPI): void {
       return;
     }
 
+    // What a translate run reported about itself beats what the totals imply.
+    if (reason === "activity" && pendingReport) {
+      const line = formatTranslateReport(pendingReport, missing);
+      pendingReport = undefined;
+      if (line) {
+        showTransient(ctx, line, missing > 0 ? "outstanding" : "resolved");
+        return;
+      }
+    }
+
     if (missing === 0) {
       // At session start this is the ordinary case, and ordinary is not news.
       if (reason === "session-start") {
@@ -576,6 +706,15 @@ export default function i18nKitWidget(pi: ExtensionAPI): void {
     });
   });
 
+  pi.on("tool_execution_start", (event) => {
+    if (!projectRoot) return;
+    if (!EDIT_TOOLS.includes(event.toolName)) return;
+    const path = (event.args as { path?: unknown })?.path;
+    if (typeof path !== "string") return;
+    const extension = path.slice(path.lastIndexOf("."));
+    if (SOURCE_EXTENSIONS.has(extension.toLowerCase())) sourceTouched = true;
+  });
+
   pi.on("tool_execution_end", (event, ctx) => {
     if (!projectRoot) return;
     const tool = toolNameOf(event.toolName, event.result?.details);
@@ -583,7 +722,50 @@ export default function i18nKitWidget(pi: ExtensionAPI): void {
     debug("tool_execution_end", { toolName: event.toolName, tool, matched });
     if (!matched) return;
     clearWorkingMessage(ctx);
+    if (!event.isError && typeof tool === "string" && tool.includes("translate")) {
+      const text = (event.result?.content ?? []).find(
+        (block: { type?: string }) => block?.type === "text",
+      )?.text;
+      pendingReport = typeof text === "string" ? parseTranslateReport(text) : undefined;
+      debug("translate report", pendingReport);
+    }
     scheduleRefresh(ctx);
+  });
+
+  /**
+   * Keys the code calls and no layer defines render raw in production. A turn
+   * that edited source is the moment that becomes true, and the cheapest moment
+   * to hear about it — so the check runs then, and only then.
+   */
+  const checkUndefinedKeys = async (ctx: ExtensionContext) => {
+    if (!projectRoot || !sourceTouched) return;
+    sourceTouched = false;
+    try {
+      const [command, prefix] = resolveCli(projectRoot);
+      const result = await pi.exec(command, [...prefix, "check", "--json", "--projectDir", projectRoot], {
+        cwd: projectRoot,
+        timeout: 120_000,
+      });
+      // `check` exits non-zero precisely when it finds something, so the exit
+      // code is not an error signal here; the payload is.
+      const parsed = JSON.parse(result.stdout) as {
+        undefinedKeys?: { key?: string }[];
+        error?: unknown;
+      };
+      if (parsed.error) return;
+      const keys = (parsed.undefinedKeys ?? [])
+        .map((finding) => finding?.key)
+        .filter((key): key is string => typeof key === "string");
+      debug("undefined keys", { count: keys.length });
+      const line = formatUndefinedKeys(keys);
+      if (line) showTransient(ctx, line, "outstanding");
+    } catch (error) {
+      debug("check threw", { message: error instanceof Error ? error.message : String(error) });
+    }
+  };
+
+  pi.on("turn_end", (_event, ctx) => {
+    void checkUndefinedKeys(ctx);
   });
 
   pi.registerCommand("i18n-coverage", {

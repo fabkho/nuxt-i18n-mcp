@@ -14,7 +14,51 @@ import { mkdtempSync, mkdirSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
-import extension, { formatCoverage, formatOutstanding, formatProgress } from "./extension.ts";
+import extension, {
+  formatCoverage,
+  formatOutstanding,
+  formatProgress,
+  formatTranslateReport,
+  formatUndefinedKeys,
+  parseTranslateReport,
+} from "./extension.ts";
+
+/** A translate_missing result in the shape the MCP tool actually returns. */
+const TRANSLATE_RESULT = JSON.stringify({
+  layers: {
+    default: {
+      results: {
+        "es-ES": {
+          mode: "provider",
+          missing: 3,
+          translated: ["booking.confirm", "booking.resource", "booking.upcoming"],
+          failed: [],
+          skipped: [],
+          placeholderValidation: { ok: true, placeholders: [], errors: [] },
+        },
+        "fr-FR": {
+          mode: "provider",
+          missing: 1,
+          translated: ["booking.upcoming"],
+          failed: [],
+          skipped: [],
+          placeholderValidation: {
+            ok: false,
+            placeholders: ["{count}"],
+            errors: [{ locale: "fr-FR", key: "booking.upcoming", missing: ["{count}"], extra: [] }],
+          },
+        },
+        "de-DE": {
+          mode: "provider",
+          missing: 0,
+          translated: [],
+          failed: [],
+          skipped: [{ key: "booking.confirm", reason: "protected-locale" }],
+        },
+      },
+    },
+  },
+});
 
 /** anny-ui at rest: a quarter million keys, nothing missing. */
 const COMPLETE = {
@@ -117,6 +161,57 @@ describe("formatCoverage", () => {
 
   it("has nothing to say about an empty status", () => {
     expect(formatCoverage({})).toBeUndefined();
+  });
+});
+
+describe("translate reports", () => {
+  it("reads which locales moved out of the tool's own result", () => {
+    const report = parseTranslateReport(TRANSLATE_RESULT);
+    expect(report?.perLocale).toEqual([
+      { code: "es-ES", translated: 3 },
+      { code: "fr-FR", translated: 1 },
+    ]);
+  });
+
+  it("notices a dropped placeholder and a protected locale", () => {
+    const report = parseTranslateReport(TRANSLATE_RESULT);
+    expect(report?.placeholderIssues).toEqual([
+      { locale: "fr-FR", key: "booking.upcoming", missing: ["{count}"] },
+    ]);
+    expect(report?.protectedLocales).toEqual(["de-DE"]);
+  });
+
+  it("survives a truncated or non-JSON result", () => {
+    expect(parseTranslateReport("{\"layers\": {\"default\": {\"resul")).toBeUndefined();
+    expect(parseTranslateReport("not json at all")).toBeUndefined();
+  });
+
+  it("names the locales that moved, the placeholder, and the skip", () => {
+    const report = parseTranslateReport(TRANSLATE_RESULT)!;
+    expect(formatTranslateReport(report, 0)).toBe(
+      "🌐 es-ES +3 · fr-FR +1 · ⚠ fr-FR dropped {count} · 1 locale protected, skipped",
+    );
+  });
+
+  it("keeps what is still outstanding in the same line", () => {
+    const report = parseTranslateReport(TRANSLATE_RESULT)!;
+    expect(formatTranslateReport(report, 4)).toContain("4 still missing");
+  });
+});
+
+describe("formatUndefinedKeys", () => {
+  it("names the keys that would render raw", () => {
+    expect(formatUndefinedKeys(["checkout.payNow", "cart.empty"])).toBe(
+      "🌐 2 undefined keys · checkout.payNow, cart.empty",
+    );
+  });
+
+  it("caps the list", () => {
+    expect(formatUndefinedKeys(["a", "b", "c", "d", "e"])).toBe("🌐 5 undefined keys · a, b, c +2");
+  });
+
+  it("says nothing when the code is clean", () => {
+    expect(formatUndefinedKeys([])).toBeUndefined();
   });
 });
 
@@ -428,6 +523,61 @@ describe("event flow", () => {
     const [, args] = pi.exec.mock.calls[0];
     expect(args).toContain("--projectDir");
     expect(args).toContain(root);
+  });
+
+  it("reports a translate from its own result rather than from the totals", async () => {
+    vi.stubEnv("I18N_KIT_WIDGET_LINGER_MS", "5000");
+    const { fire, lines } = harness(projectDir(), [JSON.stringify(ONE_KEY_SHORT_WIDE), JSON.stringify(COMPLETE)]);
+    await fire("session_start", {});
+    await vi.waitFor(() => expect(lines[0]).toContain("26 keys missing"));
+
+    await fire("tool_execution_end", {
+      toolName: "mcp",
+      isError: false,
+      result: {
+        content: [{ type: "text", text: TRANSLATE_RESULT }],
+        details: { mode: "call", server: "the-i18n-mcp", tool: "translate_missing" },
+      },
+    });
+
+    await vi.waitFor(
+      () => expect(lines.some((line) => line?.includes("es-ES +3 · fr-FR +1"))).toBe(true),
+      { timeout: 5_000 },
+    );
+    expect(lines.some((line) => line?.includes("⚠ fr-FR dropped {count}"))).toBe(true);
+    vi.unstubAllEnvs();
+  });
+
+  it("checks for undefined keys after a turn that edited source", async () => {
+    vi.stubEnv("I18N_KIT_WIDGET_LINGER_MS", "5000");
+    const check = JSON.stringify({
+      undefinedKeys: [{ key: "checkout.payNow", app: "web", searchedLayers: [], usages: [] }],
+      uncertainKeys: [],
+      summary: { usedKeysChecked: 12, undefinedCount: 1, uncertainCount: 0 },
+    });
+    const { fire, lines } = harness(projectDir(), [JSON.stringify(COMPLETE), check]);
+    await fire("session_start", {});
+
+    await fire("tool_execution_start", { toolName: "edit", args: { path: "/src/Checkout.vue" } });
+    await fire("turn_end", {});
+
+    await vi.waitFor(
+      () => expect(lines.some((line) => line?.includes("1 undefined key · checkout.payNow"))).toBe(true),
+      { timeout: 5_000 },
+    );
+    vi.unstubAllEnvs();
+  });
+
+  it("does not run the check when a turn only touched locale files", async () => {
+    const { fire, pi } = harness(projectDir(), [JSON.stringify(COMPLETE)]);
+    await fire("session_start", {});
+    await vi.waitFor(() => expect(pi.exec).toHaveBeenCalledTimes(1));
+
+    await fire("tool_execution_start", { toolName: "edit", args: { path: "/src/locales/de.json" } });
+    await fire("turn_end", {});
+
+    await new Promise((resolve) => setTimeout(resolve, 200));
+    expect(pi.exec).toHaveBeenCalledTimes(1);
   });
 
   it("narrates progress on the working row, and hands it back when the tool ends", async () => {

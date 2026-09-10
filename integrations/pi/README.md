@@ -6,7 +6,8 @@ Translation coverage in a widget next to the editor, and live progress while
 ```
 🌐 4 keys missing · es-ES 3 · fr-FR 1           ← when you sit down, then withdraws
 🌐 ⠹ ▕██████░░░░░░▏ es-ES: batch 1/1 3/6        ← while a translate runs
-🌐 22 resolved · 4 still missing                ← what moved, then withdraws
+🌐 es-ES +3 · fr-FR +1 · ⚠ fr-FR dropped {count} ← what moved, and what broke
+🌐 2 undefined keys · checkout.payNow, cart.empty ← after a turn that edited source
 🌐 26 keys resolved · all locales up to date    ← when a run clears the last of it
 ```
 
@@ -39,7 +40,8 @@ install globally.
 |---|---|
 | At session start | Reads `status --json` and mentions outstanding work — in counts, largest gaps first — then withdraws. Nothing missing means no widget at all |
 | While a kit tool runs | Renders MCP progress notifications live — batch by batch, locale by locale |
-| After a writing tool | Refreshes (debounced) — `translate_missing`, `translate_key`, `write_translations`, `remove_translations`, `move_translation_key`, `scaffold` — and reports what moved: `22 resolved · 4 still missing`, or `26 keys resolved · all locales up to date` |
+| After a writing tool | Refreshes (debounced) and reports what moved, per locale, from the tool's own result — including translations that dropped a placeholder, and locales left alone because they are protected |
+| After a turn that edited source | Runs `check`: keys the code calls and no layer defines render raw in production, so they are named while the edit is still fresh |
 | `/i18n-coverage` | The full picture on demand, percentages and per-locale detail, including when there is nothing to report |
 
 Live progress needs a pi-mcp-adapter that bridges MCP progress notifications to
