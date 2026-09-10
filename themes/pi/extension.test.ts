@@ -27,12 +27,40 @@ import extension from "./extension.ts";
 
 const BOTTOM = "╰─ main * ──────────────────────────────────────────── the-i18n-kit ─╯";
 
-/** An editor component in the shape the host expects, with a framed bottom. */
+/**
+ * An editor in the shape the host expects: state in its own fields, mutated by
+ * its own methods, rendered from those same fields.
+ *
+ * That shape is the point. A wrapper that delegates instead of patching ends up
+ * holding half the state — input lands on the wrapper, rendering reads the
+ * original — and the editor stops responding to typing, which is what shipped.
+ */
+class FakeEditor implements Component {
+  private text = "";
+  private autocompleteOpen = false;
+
+  render(): string[] {
+    return [
+      "╭─ 1m ────────────────────────────────────────────────────────────╮",
+      `│ ${this.text}${this.autocompleteOpen ? " [suggestions]" : ""}`,
+      BOTTOM,
+    ];
+  }
+
+  invalidate(): void {}
+
+  handleInput(data: string): void {
+    this.text += data;
+    if (data === "/") this.autocompleteOpen = true;
+  }
+
+  getText(): string {
+    return this.text;
+  }
+}
+
 function fakeEditor(): Component {
-  return {
-    render: () => ["╭─ 1m ────────────────────────────────────────────────────────────╮", "│ hello", BOTTOM],
-    invalidate: () => {},
-  };
+  return new FakeEditor();
 }
 
 function harness(status: string | undefined = "🌐 4 missing") {
@@ -71,12 +99,53 @@ function harness(status: string | undefined = "🌐 4 missing") {
     },
     /** What the editor renders now, through whatever wrapping is in place. */
     renderEditor: () => installed?.(...([{}, {}, {}] as never[])).render(120) ?? [],
+    /** The component the installed factory builds, as the host would get it. */
+    editorInstance: () => installed?.(...([{}, {}, {}] as never[])),
     installEditor: (factory: (...args: never[]) => Component) => {
       installed = factory;
     },
     isInstalled: () => installed !== undefined,
   };
 }
+
+describe("keeping the editor working", () => {
+  it("still types, and still opens autocomplete", async () => {
+    const { pi, fire, installEditor, editorInstance } = harness();
+    installEditor(fakeEditor);
+    extension(pi as never);
+    await fire("session_start");
+
+    const editor = editorInstance() as unknown as FakeEditor;
+    editor.handleInput("/");
+    editor.handleInput("m");
+
+    // The input must reach the same object that renders, or the editor freezes.
+    expect(editor.getText()).toBe("/m");
+    const lines = editor.render();
+    expect(lines[1]).toContain("/m");
+    expect(lines[1]).toContain("[suggestions]");
+  });
+
+  it("returns the editor itself, so the host keeps every method it had", async () => {
+    const { pi, fire, installEditor, editorInstance } = harness();
+    installEditor(fakeEditor);
+    extension(pi as never);
+    await fire("session_start");
+
+    expect(editorInstance()).toBeInstanceOf(FakeEditor);
+  });
+
+  it("patches an instance once, however often it is wrapped", async () => {
+    const { pi, fire, installEditor, editorInstance } = harness();
+    installEditor(fakeEditor);
+    extension(pi as never);
+    await fire("session_start");
+    await fire("turn_start");
+
+    const line = (editorInstance()?.render(120) ?? []).at(-1) ?? "";
+    expect(line.match(/🌐/gu) ?? []).toHaveLength(1);
+  });
+});
 
 describe("wrapping the editor", () => {
   it("labels the border when an editor is already installed", async () => {

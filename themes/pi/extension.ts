@@ -42,23 +42,29 @@ function debug(message: string, data?: unknown): void {
 }
 import { injectIntoBorder, isBottomBorder } from "./border.ts";
 
-/**
- * Wrap a component so its bottom border carries `label()`.
- *
- * Everything but `render` is forwarded by delegation rather than copied: the
- * wrapped component may implement input handling, disposal or anything else the
- * host expects, and none of that is this file's business.
- */
-function withBorderLabel(inner: EditorComponent, label: () => string | undefined): EditorComponent {
-  const wrapper = Object.create(inner) as EditorComponent;
+/** Marks an instance whose render has already been patched. */
+const PATCHED = Symbol.for("the-i18n-kit.border-patched");
 
-  wrapper.render = (width: number): string[] => {
-    const lines = inner.render(width);
+/**
+ * Make a component's bottom border carry `label()`.
+ *
+ * The component is patched in place and returned as itself, rather than wrapped
+ * in a second object that delegates to it. An editor keeps its state in its own
+ * fields and mutates them from its own methods, so a delegating wrapper ends up
+ * owning half of that state: keystrokes land on the wrapper, rendering reads the
+ * original, and the editor stops responding. One object, one state, one patched
+ * method.
+ */
+function labelBottomBorder(editor: EditorComponent, label: () => string | undefined): EditorComponent {
+  const target = editor as EditorComponent & { [PATCHED]?: boolean };
+  if (target[PATCHED]) return editor;
+  target[PATCHED] = true;
+
+  const original = editor.render.bind(editor);
+  editor.render = (width: number): string[] => {
+    const lines = original(width);
     const text = label();
-    if (!text) {
-      debug("render: no status to show");
-      return lines;
-    }
+    if (!text) return lines;
 
     // Last border line, so a frame with autocomplete rows below the input is
     // still labelled on its own edge rather than in the middle of the list.
@@ -74,7 +80,7 @@ function withBorderLabel(inner: EditorComponent, label: () => string | undefined
     return lines;
   };
 
-  return wrapper;
+  return editor;
 }
 
 /** Marks a factory as ours, so a re-check does not wrap a wrapper. */
@@ -102,7 +108,7 @@ export default function i18nKitTheme(pi: ExtensionAPI): void {
     // change to it is already accompanied by a widget update from the kit
     // extension, and that is what asks the host for the next frame.
     const wrapped: EditorFactory = (tui, theme, keybindings) =>
-      withBorderLabel(current(tui, theme, keybindings), getI18nStatus);
+      labelBottomBorder(current(tui, theme, keybindings), getI18nStatus);
     (wrapped as { [WRAPPED]?: boolean })[WRAPPED] = true;
     ctx.ui.setEditorComponent?.(wrapped);
     // The widget can stop announcing standing coverage now that the border has it.
