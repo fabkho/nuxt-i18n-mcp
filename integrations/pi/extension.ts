@@ -233,7 +233,8 @@ export default function i18nKitWidget(pi: ExtensionAPI): void {
   };
 
   pi.on("session_start", (_event, ctx) => {
-    if (!ctx.hasUI) return;
+    // No hasUI gate: setWidget is inert without a UI, and running the same path
+    // headlessly is what makes the widget testable outside an interactive session.
     projectRoot = findProjectRoot(ctx.cwd);
     debug("session_start", { cwd: ctx.cwd, projectRoot, cli: projectRoot ? resolveCli(projectRoot) : undefined });
     if (!projectRoot) return;

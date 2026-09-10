@@ -2,7 +2,13 @@
   "name": "@the-i18n-kit/pi",
   "version": "0.1.0",
   "description": "pi extension for the-i18n-kit: translation coverage widget and live translate progress.",
-  "keywords": ["pi", "pi-extension", "i18n", "translation", "mcp"],
+  "keywords": [
+    "pi",
+    "pi-extension",
+    "i18n",
+    "translation",
+    "mcp"
+  ],
   "author": "Fabian Kirchhoff",
   "license": "MIT",
   "type": "module",
@@ -12,11 +18,22 @@
     "directory": "integrations/pi"
   },
   "homepage": "https://fabkho.github.io/the-i18n-kit/getting-started/harness-integrations",
-  "files": ["extension.ts", "README.md"],
+  "files": [
+    "extension.ts",
+    "README.md"
+  ],
   "pi": {
-    "extensions": ["./extension.ts"]
+    "extensions": [
+      "./extension.ts"
+    ]
   },
   "devDependencies": {
-    "@earendil-works/pi-coding-agent": ">=0.84.0"
+    "@earendil-works/pi-coding-agent": ">=0.84.0",
+    "typescript": "^5.8.0",
+    "vitest": "^3.0.0"
+  },
+  "scripts": {
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit"
   }
 }
