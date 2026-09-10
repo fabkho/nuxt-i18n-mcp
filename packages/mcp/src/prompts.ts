@@ -10,8 +10,9 @@ import { z } from 'zod'
 import { detectI18nConfig } from '@the-i18n-kit/cli'
 import type { McpServer } from '@modelcontextprotocol/server'
 import type { ProjectConfig } from '@the-i18n-kit/cli'
+import type { ProjectScope } from './scope.js'
 
-export function registerPrompts(server: McpServer, defaultProjectDir: string): void {
+export function registerPrompts(server: McpServer, scope: ProjectScope): void {
   server.registerPrompt(
     'add-feature-translations',
     {
@@ -20,11 +21,13 @@ export function registerPrompts(server: McpServer, defaultProjectDir: string): v
       argsSchema: z.object({
         layer: z.string().optional().describe('Target layer (e.g., "root", "app-admin"). If omitted, uses layerRules from project config.'),
         namespace: z.string().optional().describe('Key namespace for the feature (e.g., "admin.users", "common.actions")'),
-        projectDir: z.string().optional().describe('Absolute path to the Nuxt project root. Defaults to I18N_PROJECT_DIR, then server cwd.'),
+        projectDir: z.string().optional().describe('Absolute path to the Nuxt project root. Defaults to the server\'s configured root, then server cwd. A path outside a configured root is refused.'),
       }),
     },
     async ({ layer, namespace, projectDir }) => {
-      const dir = projectDir ?? defaultProjectDir
+      // Outside the try: a refused directory is the caller's mistake to see,
+      // not a project whose config happened to be unreadable.
+      const dir = await scope.projectDirFor(projectDir)
       let projectConfigSection = ''
 
       try {
@@ -74,11 +77,11 @@ Follow these steps:
       description: 'Add a new language to the project: update framework config, scaffold empty locale files, then translate all keys.',
       argsSchema: z.object({
         language: z.string().describe('Language to add (e.g., "Swedish", "sv", "sv-SE")'),
-        projectDir: z.string().optional().describe('Absolute path to the project root. Defaults to I18N_PROJECT_DIR, then server cwd.'),
+        projectDir: z.string().optional().describe('Absolute path to the project root. Defaults to the server\'s configured root, then server cwd. A path outside a configured root is refused.'),
       }),
     },
     async ({ language, projectDir }) => {
-      const dir = projectDir ?? defaultProjectDir
+      const dir = await scope.projectDirFor(projectDir)
       let configSection = ''
 
       try {

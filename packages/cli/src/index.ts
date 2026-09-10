@@ -123,7 +123,12 @@ export type {
 export * from './core/types.js'
 
 // Config
-export { detectI18nConfig, getCachedConfig, clearConfigCache } from './config/detector.js'
+export { detectI18nConfig, getCachedConfig, clearConfigCache, clearConfigCacheFor } from './config/detector.js'
+// The spelling the config cache keys on. A consumer comparing one directory
+// against another (the MCP server confining a caller-supplied projectDir to
+// its root) has to resolve `..` and symlinks the same way, or the two answer
+// differently for the same directory.
+export { canonicalPath } from './config/paths.js'
 export type { I18nConfig, LocaleDefinition, LocaleDir, ProjectConfig } from './config/types.js'
 export { buildLayerGraph, serializeLayerGraph } from './config/layer-graph.js'
 export type { LayerGraph, SerializedLayerGraph } from './config/layer-graph.js'

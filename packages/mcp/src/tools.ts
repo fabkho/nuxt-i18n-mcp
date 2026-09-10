@@ -10,13 +10,14 @@
  */
 
 import { z } from 'zod'
-import { assertReportPaths, divertToReport, outputSchema, ToolError, toErrorMessage } from '@the-i18n-kit/cli'
+import { assertReportPaths, clearConfigCacheFor, divertToReport, outputSchema, ToolError, toErrorMessage } from '@the-i18n-kit/cli'
 import type { AnyOperationDescriptor, ParamSpec, ProgressFn, TranslateFn } from '@the-i18n-kit/cli'
 import type { McpServer, ServerContext } from '@modelcontextprotocol/server'
+import type { ProjectScope } from './scope.js'
 
 export interface ToolContext {
-  /** Where an operation runs when the caller names no project directory. */
-  defaultProjectDir: string
+  /** Resolves and confines the directory an operation runs in. */
+  scope: ProjectScope
   /** The startup-resolved backend, absent in agent mode. */
   translateFn?: TranslateFn
   /**
@@ -61,7 +62,7 @@ export function toolErrorResponse(tool: string, error: unknown) {
 const projectDirSchema = z
   .string()
   .optional()
-  .describe('Absolute path to the project root. Defaults to I18N_PROJECT_DIR, then server cwd. Example: "/home/user/my-app".')
+  .describe('Absolute path to the project root. Defaults to the server\'s configured root (I18N_PROJECT_DIR or the client\'s first root), then server cwd. When the server has a root, a path outside it is refused. Example: "/home/user/my-app".')
 
 /** Register every descriptor the server advertises as a tool. */
 export function registerTools(
@@ -84,6 +85,7 @@ export function registerFromDescriptor(
     throw new Error(`Operation "${descriptor.id}" declares no MCP tool.`)
   }
   const decorate = ctx.decorate?.[tool.name]
+  const writesFiles = !tool.annotations.readOnlyHint
 
   server.registerTool(
     tool.name,
@@ -104,12 +106,11 @@ export function registerFromDescriptor(
       outputSchema: outputSchema(descriptor),
     },
     async (args: Record<string, unknown>, requestCtx: ServerContext) => {
+      const { projectDir, ...rest } = args
+      let resolvedDir: string | undefined
       try {
-        const { projectDir, ...rest } = args
-        const operationArgs = {
-          ...rest,
-          projectDir: (projectDir as string | undefined) ?? ctx.defaultProjectDir,
-        }
+        resolvedDir = await ctx.scope.projectDirFor(projectDir as string | undefined)
+        const operationArgs = { ...rest, projectDir: resolvedDir }
         await assertReportPaths(descriptor, operationArgs)
         const result = await descriptor.run(
           operationArgs,
@@ -123,6 +124,20 @@ export function registerFromDescriptor(
       }
       catch (error) {
         return toolErrorResponse(tool.name, error)
+      }
+      finally {
+        // A write can add a locale file, which changes what detection resolves
+        // — and this process outlives the call, so the next read would answer
+        // from the config as it was. Only this project's entry goes: a server
+        // holding seven apps of a monorepo must not lose six of them.
+        //
+        // The locale files themselves need no eviction here: their read cache
+        // is keyed by mtime and re-stats on every read, and the writers clear
+        // the entry they overwrote.
+        //
+        // In `finally` rather than after the call, because a write that threw
+        // part-way through still wrote part of the way through.
+        if (writesFiles && resolvedDir !== undefined) clearConfigCacheFor(resolvedDir)
       }
     },
   )
