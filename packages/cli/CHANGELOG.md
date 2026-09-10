@@ -1,5 +1,22 @@
 # Changelog
 
+## [8.3.0](https://github.com/fabkho/the-i18n-kit/compare/the-i18n-kit-cli-8.2.1...the-i18n-kit-cli-8.3.0) (2026-09-10)
+
+
+### Features
+
+* **scanner:** count an SFC's own &lt;i18n&gt; block as definitions of the keys it uses ([5f4062a](https://github.com/fabkho/the-i18n-kit/commit/5f4062af52e0eb1b02f154fa686bcb135a3bef05))
+* **scanner:** decline per block, read chosen keys, the remaining vue-i18n idioms ([#504](https://github.com/fabkho/the-i18n-kit/issues/504)) ([5f4062a](https://github.com/fabkho/the-i18n-kit/commit/5f4062af52e0eb1b02f154fa686bcb135a3bef05))
+
+
+### Bug Fixes
+
+* **cli:** fail destructive operations on an unreadable locale file ([ec2fb04](https://github.com/fabkho/the-i18n-kit/commit/ec2fb045fa3fa93806f8a80fbbd55347e2606190))
+* **cli:** load the project config once per run ([ec2fb04](https://github.com/fabkho/the-i18n-kit/commit/ec2fb045fa3fa93806f8a80fbbd55347e2606190))
+* **cli:** scope the config cache clear to one project directory ([ec2fb04](https://github.com/fabkho/the-i18n-kit/commit/ec2fb045fa3fa93806f8a80fbbd55347e2606190))
+* **scanner:** decline a Vue SFC block at a time, and read the keys a call chooses ([5f4062a](https://github.com/fabkho/the-i18n-kit/commit/5f4062af52e0eb1b02f154fa686bcb135a3bef05))
+* **scanner:** glob .cjs and .cts, which the syntax frontend already reads ([5f4062a](https://github.com/fabkho/the-i18n-kit/commit/5f4062af52e0eb1b02f154fa686bcb135a3bef05))
+
 ## [8.2.1](https://github.com/fabkho/the-i18n-kit/compare/the-i18n-kit-cli-8.2.0...the-i18n-kit-cli-8.2.1) (2026-09-10)
 
 
