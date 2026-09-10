@@ -27,7 +27,7 @@ import type {
 } from './types.js'
 import { findWritableLayerOrThrow, findLocaleImpl, findLocaleSuggestion, resolveLocaleRef } from './shared.js'
 import type { LocaleRefAmbiguity } from './shared.js'
-import { validatePlaceholders, mergePlaceholderValidation } from './ops-translate.js'
+import { validatePlaceholders, mergePlaceholderValidation, describePlaceholderIssue } from './ops-translate.js'
 import { recordWrittenTranslations } from './translate/memory.js'
 
 // ─── write translations ──────────────────────────────────────
@@ -286,9 +286,9 @@ async function applyTranslations(
 
   const placeholderValidation = mergePlaceholderValidation(placeholderValidations)
   if (placeholderValidation && !placeholderValidation.ok) {
-    warnings.push(...placeholderValidation.errors.map(error => error.kind === 'plural-count'
-      ? `${error.key} (${error.locale}): plural variant count mismatch; expected ${error.sourceVariants}, got ${error.targetVariants}`
-      : `${error.key} (${error.locale}): placeholder mismatch; missing: ${error.missing.join(', ') || '-'}; extra: ${error.extra.join(', ') || '-'}`))
+    warnings.push(...placeholderValidation.errors.map(
+      error => `${error.key} (${error.locale}): ${describePlaceholderIssue(error)}`,
+    ))
   }
 
   // A dropped ref is a warning too, so callers that only read `warnings`

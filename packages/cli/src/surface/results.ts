@@ -106,10 +106,10 @@ const unresolvedLocaleRef = z.object({
 const placeholderValidationIssue = z.object({
   locale: z.string().describe('Locale code the mismatch was found in.'),
   key: z.string().describe('Dot-path key of the mismatching translation.'),
-  missing: z.array(z.string()).describe('Placeholders the source has and the translation dropped.'),
-  extra: z.array(z.string()).describe('Placeholders the translation invented and the source does not have.'),
-  kind: z.enum(['placeholder', 'plural-count']).optional()
-    .describe('What failed: a placeholder set mismatch (the default) or a vue-i18n plural variant-count mismatch.'),
+  missing: z.array(z.string()).describe('Tokens the source has and the translation dropped, each named. A token dropped more than once carries the count, as "<b> ×2".'),
+  extra: z.array(z.string()).describe('Tokens the translation invented and the source does not have, named the same way.'),
+  kind: z.enum(['placeholder', 'plural-count', 'html-tag', 'html-entity', 'printf']).optional()
+    .describe('Which parity rule failed: "placeholder" for an interpolation ({name}, {0}, @:linked.key, :param), "plural-count" for a vue-i18n plural variant-count mismatch, or the HTML tag, HTML entity and printf conversion rules.'),
   sourceVariants: z.number().int().optional()
     .describe('Plural variants in the source value. Present only for kind "plural-count".'),
   targetVariants: z.number().int().optional()

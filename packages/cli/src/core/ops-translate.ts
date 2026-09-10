@@ -9,7 +9,12 @@
 
 export { resolveProtectedLocales } from './translate/targets.js'
 
-export { validatePlaceholders, mergePlaceholderValidation } from './translate/placeholders.js'
+export {
+  validatePlaceholders,
+  comparePlaceholders,
+  mergePlaceholderValidation,
+  describePlaceholderIssue,
+} from './translate/placeholders.js'
 
 export { buildTranslationSystemPrompt, buildTranslationUserMessage } from './translate/prompts.js'
 
