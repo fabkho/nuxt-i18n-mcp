@@ -38,7 +38,7 @@ install globally.
 
 | | |
 |---|---|
-| At session start | Reads `status --json` and mentions outstanding work — in counts, largest gaps first — then withdraws. Nothing missing means no widget at all |
+| At session start | Reads `status --json` and mentions outstanding work — in counts, largest gaps first — then withdraws. Nothing missing means no widget at all. Silent entirely when a border or other permanent surface is already showing coverage |
 | While a kit tool runs | Renders MCP progress notifications live — batch by batch, locale by locale |
 | After a writing tool | Refreshes (debounced) and reports what moved, per locale, from the tool's own result — including translations that dropped a placeholder, and locales left alone because they are protected |
 | After a turn that edited source | Runs `check`: keys the code calls and no layer defines render raw in production, so they are named while the edit is still fresh |

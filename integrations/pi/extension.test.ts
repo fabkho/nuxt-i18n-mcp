@@ -13,9 +13,10 @@
 import { mkdtempSync, mkdirSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import extension, {
   formatCoverage,
+  setI18nPersistentSurface,
   formatStatus,
   formatOutstanding,
   formatProgress,
@@ -92,6 +93,9 @@ const ONE_KEY_SHORT_WIDE = {
   })),
   summary: { completionPercent: 100, missingKeys: 26, totalKeys: 226486, translatedKeys: 226460 },
 };
+
+// The channel outlives a test, so each one starts from the same place.
+beforeEach(() => setI18nPersistentSurface(false));
 
 describe("formatOutstanding", () => {
   it("leads with counts, not percentages", () => {
@@ -615,6 +619,39 @@ describe("event flow", () => {
 
     await new Promise((resolve) => setTimeout(resolve, 200));
     expect(pi.exec).toHaveBeenCalledTimes(1);
+  });
+
+  it("defers standing coverage at session start when a border carries it", async () => {
+    setI18nPersistentSurface(true);
+    const { fire, lines, statuses } = harness(projectDir(), [JSON.stringify(ONE_KEY_SHORT_WIDE)]);
+
+    await fire("session_start", {});
+
+    // The number is published for the border, and said nowhere else.
+    await vi.waitFor(() => expect(statuses).toHaveBeenCalledWith("i18n", "🌐 26 missing"));
+    expect(lines.filter((line) => line !== undefined)).toEqual([]);
+  });
+
+  it("still reports change when a border carries the standing figure", async () => {
+    setI18nPersistentSurface(true);
+    vi.stubEnv("I18N_KIT_WIDGET_LINGER_MS", "5000");
+    const { fire, lines } = harness(projectDir(), [
+      JSON.stringify(ONE_KEY_SHORT_WIDE),
+      JSON.stringify(COMPLETE),
+    ]);
+    await fire("session_start", {});
+
+    await fire("tool_execution_end", {
+      toolName: "mcp",
+      isError: false,
+      result: { content: [], details: { mode: "call", server: "the-i18n-mcp", tool: "translate_missing" } },
+    });
+
+    await vi.waitFor(
+      () => expect(lines.some((line) => line?.includes("26 keys resolved"))).toBe(true),
+      { timeout: 5_000 },
+    );
+    vi.unstubAllEnvs();
   });
 
   it("publishes coverage as a status, even when the widget stays silent", async () => {

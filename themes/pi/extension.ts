@@ -28,7 +28,7 @@ import type { EditorComponent } from "@earendil-works/pi-tui";
  */
 type EditorFactory = NonNullable<ReturnType<NonNullable<ExtensionContext["ui"]["getEditorComponent"]>>>;
 import { appendFileSync } from "node:fs";
-import { getI18nStatus } from "../../integrations/pi/extension.ts";
+import { getI18nStatus, setI18nPersistentSurface } from "../../integrations/pi/extension.ts";
 
 /** Same switch as the widget's, so one run explains both halves. */
 function debug(message: string, data?: unknown): void {
@@ -105,6 +105,8 @@ export default function i18nKitTheme(pi: ExtensionAPI): void {
       withBorderLabel(current(tui, theme, keybindings), getI18nStatus);
     (wrapped as { [WRAPPED]?: boolean })[WRAPPED] = true;
     ctx.ui.setEditorComponent?.(wrapped);
+    // The widget can stop announcing standing coverage now that the border has it.
+    setI18nPersistentSurface(true);
     return true;
   };
 

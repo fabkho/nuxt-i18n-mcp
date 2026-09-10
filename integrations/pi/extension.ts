@@ -44,6 +44,8 @@ const STATUS_CHANNEL = Symbol.for("the-i18n-kit.pi.status");
 interface StatusChannel {
   value?: string;
   listeners: Set<(status: string | undefined) => void>;
+  /** Set by a surface that renders coverage permanently, such as an editor border. */
+  hasPersistentSurface?: boolean;
 }
 
 function statusChannel(): StatusChannel {
@@ -53,6 +55,21 @@ function statusChannel(): StatusChannel {
 
 export function getI18nStatus(): string | undefined {
   return statusChannel().value;
+}
+
+/**
+ * Declare that something renders coverage permanently.
+ *
+ * The widget then stops announcing standing coverage at session start: with a
+ * border carrying the number, saying it twice makes the transient copy noise
+ * rather than news. Everything the widget reports about change is unaffected.
+ */
+export function setI18nPersistentSurface(present: boolean): void {
+  statusChannel().hasPersistentSurface = present;
+}
+
+export function hasI18nPersistentSurface(): boolean {
+  return statusChannel().hasPersistentSurface === true;
 }
 
 export function onI18nStatus(listener: (status: string | undefined) => void): () => void {
@@ -689,6 +706,13 @@ export default function i18nKitWidget(pi: ExtensionAPI): void {
         showTransient(ctx, line, missing > 0 ? "outstanding" : "resolved");
         return;
       }
+    }
+
+    if (reason === "session-start" && missing > 0 && hasI18nPersistentSurface()) {
+      // Something durable is already showing this; a second copy that fades is
+      // just the same fact, twice.
+      setLine(ctx, undefined);
+      return;
     }
 
     if (missing === 0) {

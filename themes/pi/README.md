@@ -38,4 +38,6 @@ Requires `@the-i18n-kit/pi`, which is where the coverage figure comes from.
 | `🌐 ?` | The last read failed, so the number is unknown |
 
 The widget in `@the-i18n-kit/pi` reports change and withdraws; this reports
-state and stays. Neither duplicates the other.
+state and stays. They do not duplicate each other: with this installed, the
+widget stops announcing standing coverage at session start and leaves it to the
+border, while continuing to report what changes.
