@@ -188,20 +188,33 @@ describe('gitlab-ci.yml job scripts, executed', () => {
    * test, which needs those stages to prove the gate outlives them.
    */
   describe('.i18n-translate STATUS branching', () => {
+    /** The translation memory the CLI wrote, as the job finds it on disk. */
+    type Memory = 'absent' | 'written' | 'ignored'
+
+    const MEMORY_FILE = '.i18n-kit.lock.json'
+
     /**
      * Stands the job up on a repo whose locale file has uncommitted changes,
      * as it would be after a real translate wrote to it. `git push` is shimmed
      * to succeed (there is no remote) while everything before it stays real, so
      * the commit is genuinely made rather than simulated.
      */
-    async function seedRepoWithTranslations(dir: string, stubBin: string): Promise<void> {
+    async function seedRepoWithTranslations(dir: string, stubBin: string, memory: Memory): Promise<void> {
       const git = { cwd: dir, env: { ...process.env, GIT_AUTHOR_NAME: 't', GIT_AUTHOR_EMAIL: 't@t', GIT_COMMITTER_NAME: 't', GIT_COMMITTER_EMAIL: 't@t' } }
       await execFileAsync('git', ['init', '-q'], git)
       await mkdir(join(dir, 'i18n/locales'), { recursive: true })
       await writeFile(join(dir, 'i18n/locales/de.json'), '{}\n')
       await execFileAsync('git', ['add', 'i18n/locales/de.json'], git)
+      if (memory === 'ignored') {
+        await writeFile(join(dir, '.gitignore'), '.i18n-kit.lock.json\n')
+        await execFileAsync('git', ['add', '.gitignore'], git)
+      }
       await execFileAsync('git', ['commit', '-q', '-m', 'root'], git)
       await writeFile(join(dir, 'i18n/locales/de.json'), '{"a":"Hallo"}\n')
+      // What a real run leaves beside the translations it wrote.
+      if (memory !== 'absent') {
+        await writeFile(join(dir, MEMORY_FILE), '{"version":2,"sourceLocale":"de","entries":{}}\n')
+      }
 
       const realGit = (await execFileAsync('sh', ['-c', 'command -v git'])).stdout.trim()
       await writeFile(
@@ -217,7 +230,8 @@ describe('gitlab-ci.yml job scripts, executed', () => {
       stubExit: number,
       env: Record<string, string> = {},
       seedRepo = false,
-    ): Promise<Run & { args: string, log: string }> {
+      memory: Memory = 'absent',
+    ): Promise<Run & { args: string, log: string, files: string }> {
       const dir = await mkdtemp(join(tmpdir(), 'i18n-tpl-translate-'))
       const stubBin = join(dir, '.bin')
       await mkdir(stubBin, { recursive: true })
@@ -228,7 +242,7 @@ describe('gitlab-ci.yml job scripts, executed', () => {
         `#!/bin/sh\nprintf '%s ' "$@" > '${argsFile}'\ncat <<'JSON'\n${stubResult}\nJSON\nexit ${stubExit}\n`,
       )
       await chmod(shim, 0o755)
-      if (seedRepo) await seedRepoWithTranslations(dir, stubBin)
+      if (seedRepo) await seedRepoWithTranslations(dir, stubBin, memory)
 
       const run = await runScript(await jobScript('.i18n-translate'), dir, {
         ...await jobVariables('.i18n-translate'),
@@ -247,8 +261,11 @@ describe('gitlab-ci.yml job scripts, executed', () => {
       const log = seedRepo
         ? (await execFileAsync('git', ['log', '--format=%s'], { cwd: dir })).stdout
         : ''
+      const files = seedRepo
+        ? (await execFileAsync('git', ['show', '--name-only', '--format=', 'HEAD'], { cwd: dir })).stdout
+        : ''
       await rm(dir, { recursive: true, force: true })
-      return { ...run, args, log }
+      return { ...run, args, log, files }
     }
 
     it('exits 0 on a successful run', async () => {
@@ -310,6 +327,38 @@ describe('gitlab-ci.yml job scripts, executed', () => {
       expect(run.code).toBe(2)
       expect(run.log).toContain('i18n: auto-translate missing keys')
       expect(run.stdout).toContain('Pushed to feat/translate')
+    })
+
+    // The memory is the record of what each translation was made from. Left out
+    // of the commit it goes with the runner, and the next run — reading no
+    // memory — reports nothing as stale however far the sources have moved.
+    it('commits the translation memory beside the translations it describes', async () => {
+      const clean = JSON.stringify({ summary: { totalTranslated: 3, totalFailed: 0 } })
+      const run = await runTranslate(clean, 0, { I18N_DRY_RUN: 'false' }, true, 'written')
+
+      expect(run.code).toBe(0)
+      expect(run.files).toContain('.i18n-kit.lock.json')
+      expect(run.files).toContain('i18n/locales/de.json')
+    })
+
+    it('commits the translations alone when no memory was written', async () => {
+      const clean = JSON.stringify({ summary: { totalTranslated: 3, totalFailed: 0 } })
+      const run = await runTranslate(clean, 0, { I18N_DRY_RUN: 'false' }, true, 'absent')
+
+      expect(run.code).toBe(0)
+      expect(run.files).toContain('i18n/locales/de.json')
+      expect(run.files).not.toContain('.i18n-kit.lock.json')
+    })
+
+    // A project that ignores the memory has decided not to keep it; staging it
+    // anyway is the one way `git add` can fail the job outright.
+    it('leaves an ignored translation memory out of the commit, and still succeeds', async () => {
+      const clean = JSON.stringify({ summary: { totalTranslated: 3, totalFailed: 0 } })
+      const run = await runTranslate(clean, 0, { I18N_DRY_RUN: 'false' }, true, 'ignored')
+
+      expect(run.code).toBe(0)
+      expect(run.files).toContain('i18n/locales/de.json')
+      expect(run.files).not.toContain('.i18n-kit.lock.json')
     })
 
     it('requests the partial-failure gate only when asked', async () => {

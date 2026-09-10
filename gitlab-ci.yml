@@ -39,6 +39,7 @@
     I18N_DRY_RUN: "false"     # "true" previews without writing or committing
     I18N_FAIL_ON_FAILED: ""   # "true" exits 2 when any key failed to translate
     I18N_LOCALE_PATHS: "i18n/locales/"  # space-separated globs to stage — must cover every layer's locale dir
+    I18N_MEMORY_FILE: ".i18n-kit.lock.json"  # the translation memory the CLI writes at the project root, staged with the translations
     I18N_COMMIT_MESSAGE: ""   # replaces the generated commit message
     I18N_PUSH_TOKEN: ""       # access token to push with instead of the job token; with the api
                               # scope it also refreshes the MR pipeline after the push
@@ -76,11 +77,20 @@
       # A tripped gate is carried past the commit: exiting here would report the
       # translations the run did produce as red AND throw them away.
       if [ "$I18N_DRY_RUN" = "true" ]; then echo "Dry run complete. No files written."; exit "$STATUS"; fi
-      if git diff --quiet -- $I18N_LOCALE_PATHS && git diff --cached --quiet -- $I18N_LOCALE_PATHS; then echo "No translation changes to commit."; exit "$STATUS"; fi
+      # The translation memory belongs to the commit that produced it. It
+      # records the source text each target was translated from, so the next
+      # run can tell a target still made from the current source from one whose
+      # source has changed since — and a run whose workspace is thrown away
+      # leaves the next one with no memory at all. Absent when translationMemory
+      # is off and skipped when the project ignores it; neither is an error.
+      STAGE="$I18N_LOCALE_PATHS"
+      if [ -f "$I18N_MEMORY_FILE" ] && ! git check-ignore -q "$I18N_MEMORY_FILE"; then STAGE="$STAGE $I18N_MEMORY_FILE"; fi
+
+      if git diff --quiet -- $STAGE && git diff --cached --quiet -- $STAGE; then echo "No translation changes to commit."; exit "$STATUS"; fi
 
       git config user.name "${GITLAB_USER_NAME:-i18n CI}"
       git config user.email "${GITLAB_USER_EMAIL:-ci@the-i18n-kit.dev}"
-      git add $I18N_LOCALE_PATHS
+      git add -- $STAGE
       git commit -m "${I18N_COMMIT_MESSAGE:-i18n: auto-translate missing keys (${I18N_LAYER:-all layers}) via $I18N_PROVIDER}"
 
       PUSH_URL="https://gitlab-ci-token:${CI_JOB_TOKEN}@${CI_SERVER_HOST}/${CI_PROJECT_PATH}.git"
