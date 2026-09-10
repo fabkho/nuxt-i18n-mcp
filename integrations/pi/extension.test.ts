@@ -131,7 +131,7 @@ describe("formatProgress", () => {
 });
 
 /** A pi API and context that record what the extension does with them. */
-function harness(cwd: string, statusResults: string[]) {
+function harness(cwd: string, statusResults: string[], tagColors = false) {
   const handlers: Record<string, ((event: unknown, ctx: unknown) => unknown)[]> = {};
   const lines: (string | undefined)[] = [];
   let execCount = 0;
@@ -151,11 +151,44 @@ function harness(cwd: string, statusResults: string[]) {
       killed: false,
     })),
   };
+  // A theme that returns text untouched, so assertions stay about content, and a
+  // TUI whose renders are counted rather than drawn.
+  const theme = {
+    fg: (color: string, text: string) => (tagColors ? `<${color}>${text}</${color}>` : text),
+  } as never;
+  const tui = { requestRender: () => renderComponent() } as never;
+  let component: { render: (width: number) => string[]; dispose?: () => void } | undefined;
+  const renders: string[] = [];
+
+  const renderComponent = () => {
+    const [line] = component?.render(120) ?? [];
+    renders.push(line ?? "");
+    if (line !== undefined) lines.push(line);
+  };
+
   const ctx = {
     hasUI: true,
     cwd,
     ui: {
-      setWidget: (_key: string, content?: string[]) => lines.push(content?.[0]),
+      setWidget: (
+        _key: string,
+        content?: string[] | ((tui: never, theme: never) => { render: (width: number) => string[]; dispose?: () => void }),
+        _options?: unknown,
+      ) => {
+        if (content === undefined) {
+          component?.dispose?.();
+          component = undefined;
+          lines.push(undefined);
+          return;
+        }
+        if (typeof content === "function") {
+          component = content(tui, theme);
+          renderComponent();
+          return;
+        }
+        lines.push(content[0]);
+      },
+      setWorkingMessage: vi.fn(),
       notify: vi.fn(),
     },
   };
@@ -170,6 +203,8 @@ function harness(cwd: string, statusResults: string[]) {
       for (const handler of handlers[name] ?? []) await handler(event, ctx);
     },
     command: async () => commandHandler?.("", ctx),
+    workingMessages: ctx.ui.setWorkingMessage,
+    renders,
   };
 }
 
@@ -308,6 +343,79 @@ describe("event flow", () => {
       },
     });
 
+    const line = lines[1] ?? "";
+    expect(line).toContain("es-ES: batch 1/1");
+    expect(line).toContain("3/6");
+    // half done, so half the bar is filled
+    expect(line).toContain("██████░░░░░░");
+    expect(line).toMatch(/[⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏]/u);
+  });
+
+  it("renders plain text when styling is turned off", async () => {
+    vi.stubEnv("I18N_KIT_WIDGET_STYLE", "plain");
+    const { fire, lines } = harness(projectDir(), [JSON.stringify(COMPLETE)]);
+    await fire("session_start", {});
+    await vi.waitFor(() => expect(lines.length).toBe(1));
+
+    await fire("tool_execution_update", {
+      toolName: "mcp",
+      partialResult: {
+        content: [],
+        details: {
+          mcpProgress: { server: "the-i18n-mcp", tool: "translate_missing", progress: 3, total: 6, message: "es-ES: batch 1/1" },
+        },
+      },
+    });
+
     expect(lines[1]).toBe("🌐 es-ES: batch 1/1 (3/6)");
+    vi.unstubAllEnvs();
+  });
+
+  it("colours outstanding work as a warning and resolution as a success", async () => {
+    vi.stubEnv("I18N_KIT_WIDGET_LINGER_MS", "5000");
+    const { fire, lines } = harness(
+      projectDir(),
+      [JSON.stringify(ONE_KEY_SHORT_WIDE), JSON.stringify(COMPLETE)],
+      true,
+    );
+
+    await fire("session_start", {});
+    await vi.waitFor(() => expect(lines[0]).toContain("<warning>26 keys missing</warning>"));
+    expect(lines[0]).toContain("<accent>🌐</accent>");
+
+    await fire("tool_execution_end", {
+      toolName: "mcp",
+      isError: false,
+      result: { content: [], details: { mode: "call", server: "the-i18n-mcp", tool: "translate_missing" } },
+    });
+
+    await vi.waitFor(
+      () => expect(lines.some((line) => line?.includes("<success>26 keys resolved</success>"))).toBe(true),
+      { timeout: 5_000 },
+    );
+    vi.unstubAllEnvs();
+  });
+
+  it("narrates progress on the working row, and hands it back when the tool ends", async () => {
+    const { fire, workingMessages } = harness(projectDir(), [JSON.stringify(COMPLETE)]);
+    await fire("session_start", {});
+
+    await fire("tool_execution_update", {
+      toolName: "mcp",
+      partialResult: {
+        content: [],
+        details: {
+          mcpProgress: { server: "the-i18n-mcp", tool: "translate_missing", progress: 12, total: 40, message: "translating es-ES" },
+        },
+      },
+    });
+    expect(workingMessages).toHaveBeenCalledWith("translating es-ES (12/40)");
+
+    await fire("tool_execution_end", {
+      toolName: "mcp",
+      isError: false,
+      result: { content: [], details: { mode: "call", server: "the-i18n-mcp", tool: "translate_missing" } },
+    });
+    expect(workingMessages).toHaveBeenLastCalledWith();
   });
 });

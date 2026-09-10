@@ -17,7 +17,9 @@
 
 import { appendFileSync, existsSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
-import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
+import type { ExtensionAPI, ExtensionContext, Theme } from "@earendil-works/pi-coding-agent";
+import type { Component, TUI } from "@earendil-works/pi-tui";
+import { truncateToWidth } from "@earendil-works/pi-tui";
 
 const WIDGET_KEY = "the-i18n-kit";
 
@@ -235,6 +237,133 @@ function isMutatingKitTool(name: string | undefined): boolean {
   return name !== undefined && MUTATING_TOOLS.some((tool) => name.includes(tool));
 }
 
+const SPINNER_FRAMES = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
+const SPINNER_INTERVAL_MS = 120;
+const BAR_WIDTH = 12;
+
+/** What the widget is currently saying, and in which register. */
+type LineKind = "outstanding" | "resolved" | "detail" | "progress";
+
+interface ProgressState {
+  done: number;
+  total?: number;
+  message: string;
+}
+
+interface WidgetState {
+  kind: LineKind;
+  text?: string;
+  progress?: ProgressState;
+}
+
+/** The unstyled form, for plain terminals and for tests to assert on. */
+function plainLine(state: WidgetState): string {
+  if (state.kind === "progress" && state.progress) {
+    const { done, total, message } = state.progress;
+    return formatProgress({ progress: done, total, message });
+  }
+  return state.text ?? "";
+}
+
+/**
+ * The widget as a component, so it can carry colour and motion.
+ *
+ * Colours are semantic — `warning` for work outstanding, `success` for work
+ * done — which means they come from whatever theme is loaded rather than from
+ * anything this package decides. The spinner turns only while a tool is
+ * running: an idle line that animates is a line that costs redraws to say
+ * nothing.
+ */
+class WidgetLine implements Component {
+  private frame = 0;
+  private timer: ReturnType<typeof setInterval> | undefined;
+  private readonly tui: TUI;
+  private readonly theme: Theme;
+  private readonly read: () => WidgetState | undefined;
+
+  // Written out rather than declared as parameter properties: the loaders that
+  // run this file range from esbuild to Node's strip-only mode, and the latter
+  // refuses them.
+  constructor(tui: TUI, theme: Theme, read: () => WidgetState | undefined) {
+    this.tui = tui;
+    this.theme = theme;
+    this.read = read;
+  }
+
+  render(width: number): string[] {
+    const state = this.read();
+    if (!state) {
+      this.stopAnimation();
+      return [];
+    }
+    if (state.kind === "progress") this.startAnimation();
+    else this.stopAnimation();
+
+    const line =
+      state.kind === "progress" && state.progress ? this.renderProgress(state.progress) : this.renderText(state);
+    return [truncateToWidth(line, width)];
+  }
+
+  invalidate(): void {}
+
+  requestRender(): void {
+    this.tui.requestRender();
+  }
+
+  dispose(): void {
+    this.stopAnimation();
+  }
+
+  private renderText(state: WidgetState): string {
+    const [head = "", ...tail] = (state.text ?? "").split(" · ");
+    const headColor = state.kind === "resolved" ? "success" : state.kind === "outstanding" ? "warning" : "text";
+    const segments = [
+      this.theme.fg(headColor, head.replace(/^🌐\s*/u, "")),
+      // A tail that still mentions gaps keeps the warning colour; the rest is context.
+      ...tail.map((part) => this.theme.fg(/missing/u.test(part) ? "warning" : "muted", part)),
+    ];
+    return `${this.theme.fg("accent", "🌐")} ${segments.join(this.theme.fg("dim", " · "))}`;
+  }
+
+  private renderProgress(progress: ProgressState): string {
+    const spinner = this.theme.fg("accent", SPINNER_FRAMES[this.frame % SPINNER_FRAMES.length] ?? "");
+    const ratio = progress.total === undefined ? `${progress.done}` : `${progress.done}/${progress.total}`;
+    const bar = progress.total === undefined ? "" : `${this.renderBar(progress.done / progress.total)} `;
+    return [
+      this.theme.fg("accent", "🌐"),
+      spinner,
+      `${bar}${this.theme.fg("text", progress.message)}`,
+      this.theme.fg("muted", ratio),
+    ].join(" ");
+  }
+
+  private renderBar(fraction: number): string {
+    const filled = Math.max(0, Math.min(BAR_WIDTH, Math.round(fraction * BAR_WIDTH)));
+    return [
+      this.theme.fg("dim", "▕"),
+      this.theme.fg("accent", "█".repeat(filled)),
+      this.theme.fg("dim", "░".repeat(BAR_WIDTH - filled)),
+      this.theme.fg("dim", "▏"),
+    ].join("");
+  }
+
+  private startAnimation(): void {
+    if (this.timer) return;
+    this.timer = setInterval(() => {
+      this.frame += 1;
+      this.tui.requestRender();
+    }, SPINNER_INTERVAL_MS);
+    // The spinner must never hold the process open on its own.
+    this.timer.unref?.();
+  }
+
+  private stopAnimation(): void {
+    if (!this.timer) return;
+    clearInterval(this.timer);
+    this.timer = undefined;
+  }
+}
+
 /** Why a refresh happened, which decides whether the widget shows anything. */
 type Reason = "session-start" | "activity" | "command";
 
@@ -247,8 +376,59 @@ export default function i18nKitWidget(pi: ExtensionAPI): void {
   let lastMissing: number | undefined;
   const placement = process.env.I18N_KIT_WIDGET_PLACEMENT === "aboveEditor" ? "aboveEditor" : "belowEditor";
 
-  const setLine = (ctx: ExtensionContext, line: string | undefined) => {
-    ctx.ui.setWidget(WIDGET_KEY, line === undefined ? undefined : [line], { placement });
+  let state: WidgetState | undefined;
+  let mounted = false;
+  let component: WidgetLine | undefined;
+  const styled = process.env.I18N_KIT_WIDGET_STYLE !== "plain";
+
+  /** Push the current state to the widget, mounting or unmounting as needed. */
+  const paint = (ctx: ExtensionContext) => {
+    if (!state) {
+      ctx.ui.setWidget(WIDGET_KEY, undefined, { placement });
+      component?.dispose();
+      component = undefined;
+      mounted = false;
+      return;
+    }
+    if (!styled) {
+      ctx.ui.setWidget(WIDGET_KEY, [plainLine(state)], { placement });
+      mounted = true;
+      return;
+    }
+    if (!mounted) {
+      ctx.ui.setWidget(
+        WIDGET_KEY,
+        (tui: TUI, theme: Theme) => {
+          component = new WidgetLine(tui, theme, () => state);
+          return component;
+        },
+        { placement },
+      );
+      mounted = true;
+      return;
+    }
+    component?.requestRender();
+  };
+
+  const setLine = (ctx: ExtensionContext, line: string | undefined, kind: LineKind = "detail") => {
+    state = line === undefined ? undefined : { kind, text: line };
+    paint(ctx);
+  };
+
+  /**
+   * Mirror progress onto pi's working row as well as the widget: the spinner
+   * there is already animating for the same wait, and a verb beats a generic one.
+   */
+  const setProgress = (ctx: ExtensionContext, progress: ProgressState) => {
+    state = { kind: "progress", progress };
+    paint(ctx);
+    const ratio = progress.total === undefined ? `${progress.done}` : `${progress.done}/${progress.total}`;
+    ctx.ui.setWorkingMessage?.(`${progress.message} (${ratio})`);
+  };
+
+  /** Hand the working row back to pi once the work it described is over. */
+  const clearWorkingMessage = (ctx: ExtensionContext) => {
+    ctx.ui.setWorkingMessage?.();
   };
 
   const clearLinger = () => {
@@ -257,9 +437,9 @@ export default function i18nKitWidget(pi: ExtensionAPI): void {
   };
 
   /** Show a line, then withdraw it: for states that are worth a glance, not a residency. */
-  const showTransient = (ctx: ExtensionContext, line: string) => {
+  const showTransient = (ctx: ExtensionContext, line: string, kind: LineKind) => {
     clearLinger();
-    setLine(ctx, line);
+    setLine(ctx, line, kind);
     lingerTimer = setTimeout(() => setLine(ctx, undefined), settledLingerMs());
   };
 
@@ -279,7 +459,7 @@ export default function i18nKitWidget(pi: ExtensionAPI): void {
 
     if (reason === "command") {
       const line = formatCoverage(status);
-      if (line) showTransient(ctx, line);
+      if (line) showTransient(ctx, line, "detail");
       return;
     }
 
@@ -293,17 +473,18 @@ export default function i18nKitWidget(pi: ExtensionAPI): void {
       showTransient(
         ctx,
         resolved > 0 ? `🌐 ${count(resolved, "key")} resolved · all locales up to date` : "🌐 all locales up to date",
+        "resolved",
       );
       return;
     }
 
     if (reason === "activity" && previous !== undefined && previous > missing) {
-      showTransient(ctx, `🌐 ${previous - missing} resolved · ${missing} still missing`);
+      showTransient(ctx, `🌐 ${previous - missing} resolved · ${missing} still missing`, "resolved");
       return;
     }
 
     const outstanding = formatOutstanding(status);
-    if (outstanding) showTransient(ctx, outstanding);
+    if (outstanding) showTransient(ctx, outstanding, "outstanding");
   };
 
   const refresh = async (ctx: ExtensionContext, reason: Reason) => {
@@ -355,7 +536,11 @@ export default function i18nKitWidget(pi: ExtensionAPI): void {
     if (!progress) return;
     if (!isMutatingKitTool(typeof progress.tool === "string" ? progress.tool : undefined)) return;
     clearLinger();
-    setLine(ctx, formatProgress(progress));
+    setProgress(ctx, {
+      done: typeof progress.progress === "number" ? progress.progress : 0,
+      total: typeof progress.total === "number" ? progress.total : undefined,
+      message: typeof progress.message === "string" ? progress.message : "working",
+    });
   });
 
   pi.on("tool_execution_end", (event, ctx) => {
@@ -364,6 +549,7 @@ export default function i18nKitWidget(pi: ExtensionAPI): void {
     const matched = isMutatingKitTool(tool);
     debug("tool_execution_end", { toolName: event.toolName, tool, matched });
     if (!matched) return;
+    clearWorkingMessage(ctx);
     scheduleRefresh(ctx);
   });
 

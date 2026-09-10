@@ -5,10 +5,16 @@ Translation coverage in a widget next to the editor, and live progress while
 
 ```
 🌐 4 keys missing · es-ES 3 · fr-FR 1           ← when you sit down, then withdraws
-🌐 es-ES: batch 1/2 (3/6)                       ← while a translate runs
+🌐 ⠹ ▕██████░░░░░░▏ es-ES: batch 1/1 3/6        ← while a translate runs
 🌐 22 resolved · 4 still missing                ← what moved, then withdraws
 🌐 26 keys resolved · all locales up to date    ← when a run clears the last of it
 ```
+
+Colours come from the active theme — `warning` for work outstanding, `success`
+for work done, `accent` for the marker — so the widget follows whatever theme is
+loaded rather than picking colours of its own. The spinner turns only while a
+tool is running. During a translate the working row narrates the same progress,
+since its spinner is already animating for the same wait.
 
 The widget shows change, never state: it appears when something is happening or
 just happened, and withdraws. A line that stays put stops being read, and a
@@ -48,6 +54,7 @@ stays quiet.
 | `I18N_KIT_WIDGET_LINGER_MS` | How long a settled confirmation stays before withdrawing (default: 15000) |
 | `I18N_KIT_WIDGET_DEBOUNCE_MS` | Delay before refreshing after a tool writes (default: 1500) |
 | `I18N_KIT_WIDGET_DEBUG=<file>` | Append every decision the widget makes to a file |
+| `I18N_KIT_WIDGET_STYLE=plain` | No colour, no spinner, plain text — for terminals that want none of it |
 
 The extension prefers a project-local `the-i18n-cli`, then a global install,
 then `npx @the-i18n-kit/cli@latest`.
