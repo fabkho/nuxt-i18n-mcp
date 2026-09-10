@@ -59,7 +59,19 @@ const MUTATING_TOOLS = [
 
 /** Locales listed individually before the rest collapse into a count. */
 const MAX_LISTED_LOCALES = 4;
-const REFRESH_DEBOUNCE_MS = 1_500;
+
+/**
+ * Read per call rather than at import, so a session can tune them and a test
+ * does not have to wait out the real ones.
+ */
+function refreshDebounceMs(): number {
+  return Number(process.env.I18N_KIT_WIDGET_DEBOUNCE_MS ?? 1_500);
+}
+
+/** How long a "nothing to do" confirmation stays before the widget withdraws. */
+function settledLingerMs(): number {
+  return Number(process.env.I18N_KIT_WIDGET_LINGER_MS ?? 15_000);
+}
 
 interface LocaleStatus {
   code: string;
@@ -157,7 +169,7 @@ export function formatCoverage(status: StatusResult): string | undefined {
   const overall = overallPercent(status.summary);
   const missing = status.summary?.missingKeys ?? 0;
   if (locales.length === 0 && overall === undefined) return undefined;
-  if (missing === 0) return "🌐 i18n complete";
+  if (missing === 0) return "🌐 all locales up to date";
 
   // Rounded completion hides a single missing key in a large locale, so the
   // missing count decides what counts as incomplete.
@@ -189,17 +201,62 @@ function isMutatingKitTool(name: string | undefined): boolean {
   return name !== undefined && MUTATING_TOOLS.some((tool) => name.includes(tool));
 }
 
+/** Why a refresh happened, which decides whether the widget shows anything. */
+type Reason = "session-start" | "activity" | "command";
+
 export default function i18nKitWidget(pi: ExtensionAPI): void {
   let projectRoot: string | undefined;
   let refreshTimer: ReturnType<typeof setTimeout> | undefined;
+  let lingerTimer: ReturnType<typeof setTimeout> | undefined;
   let refreshing = false;
+  /** Missing keys as of the last successful read, for reporting what changed. */
+  let lastMissing: number | undefined;
   const placement = process.env.I18N_KIT_WIDGET_PLACEMENT === "aboveEditor" ? "aboveEditor" : "belowEditor";
 
   const setLine = (ctx: ExtensionContext, line: string | undefined) => {
     ctx.ui.setWidget(WIDGET_KEY, line === undefined ? undefined : [line], { placement });
   };
 
-  const refresh = async (ctx: ExtensionContext) => {
+  const clearLinger = () => {
+    if (lingerTimer) clearTimeout(lingerTimer);
+    lingerTimer = undefined;
+  };
+
+  /** Show a line, then withdraw it: for states that are worth a glance, not a residency. */
+  const showTransient = (ctx: ExtensionContext, line: string) => {
+    clearLinger();
+    setLine(ctx, line);
+    lingerTimer = setTimeout(() => setLine(ctx, undefined), settledLingerMs());
+  };
+
+  /**
+   * What to display once a status read lands.
+   *
+   * Outstanding work stays on screen, because it is a standing fact about the
+   * project. "Nothing missing" is not: at session start it is the ordinary case
+   * and says nothing worth a permanent line, so the widget keeps quiet. After a
+   * tool ran, or when asked outright, it answers — briefly — because then the
+   * absence of work is news.
+   */
+  const present = (ctx: ExtensionContext, status: StatusResult, reason: Reason) => {
+    const missing = status.summary?.missingKeys ?? 0;
+    const previous = lastMissing;
+    lastMissing = missing;
+
+    if (missing > 0) {
+      clearLinger();
+      setLine(ctx, formatCoverage(status));
+      return;
+    }
+    if (reason === "session-start") {
+      setLine(ctx, undefined);
+      return;
+    }
+    const resolved = previous !== undefined && previous > 0 ? previous : 0;
+    showTransient(ctx, resolved > 0 ? `🌐 ${resolved} keys resolved · all locales up to date` : "🌐 all locales up to date");
+  };
+
+  const refresh = async (ctx: ExtensionContext, reason: Reason) => {
     if (!projectRoot || refreshing) return;
     refreshing = true;
     try {
@@ -217,9 +274,8 @@ export default function i18nKitWidget(pi: ExtensionAPI): void {
         debug("status returned an error result", parsed.error);
         return;
       }
-      const line = formatCoverage(parsed);
-      debug("refreshed", { line, summary: parsed.summary });
-      setLine(ctx, line);
+      debug("refreshed", { reason, summary: parsed.summary });
+      present(ctx, parsed, reason);
     } catch (error) {
       debug("refresh threw", { message: error instanceof Error ? error.message : String(error) });
     } finally {
@@ -229,7 +285,7 @@ export default function i18nKitWidget(pi: ExtensionAPI): void {
 
   const scheduleRefresh = (ctx: ExtensionContext) => {
     if (refreshTimer) clearTimeout(refreshTimer);
-    refreshTimer = setTimeout(() => void refresh(ctx), REFRESH_DEBOUNCE_MS);
+    refreshTimer = setTimeout(() => void refresh(ctx, "activity"), refreshDebounceMs());
   };
 
   pi.on("session_start", (_event, ctx) => {
@@ -238,7 +294,7 @@ export default function i18nKitWidget(pi: ExtensionAPI): void {
     projectRoot = findProjectRoot(ctx.cwd);
     debug("session_start", { cwd: ctx.cwd, projectRoot, cli: projectRoot ? resolveCli(projectRoot) : undefined });
     if (!projectRoot) return;
-    void refresh(ctx);
+    void refresh(ctx, "session-start");
   });
 
   // Progress notifications arrive as partial results while a tool runs.
@@ -248,6 +304,7 @@ export default function i18nKitWidget(pi: ExtensionAPI): void {
       ?.mcpProgress;
     if (!progress) return;
     if (!isMutatingKitTool(typeof progress.tool === "string" ? progress.tool : undefined)) return;
+    clearLinger();
     setLine(ctx, formatProgress(progress));
   });
 
@@ -268,7 +325,7 @@ export default function i18nKitWidget(pi: ExtensionAPI): void {
         ctx.ui.notify("Not an i18n-kit project (no .i18n-mcp.json or i18n-kit.config.*)", "warning");
         return;
       }
-      await refresh(ctx);
+      await refresh(ctx, "command");
     },
   });
 }

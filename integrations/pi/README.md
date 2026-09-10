@@ -4,10 +4,14 @@ Translation coverage in a widget next to the editor, and live progress while
 `translate_missing` runs.
 
 ```
-🌐 83% · es 75% · fr 92% · 4 missing        ← idle
-🌐 translating es-ES: batch 1/2 (3/6)       ← while a translate runs
-🌐 i18n complete                            ← nothing missing
+🌐 83% · es 75% · fr 92% · 4 missing            ← work outstanding, stays put
+🌐 es-ES: batch 1/2 (3/6)                       ← while a translate runs
+🌐 26 keys resolved · all locales up to date    ← after it finishes, then withdraws
 ```
+
+Nothing missing and nothing happening means no widget. Its presence is the
+signal: on screen there is i18n work or i18n just happened, absent there is
+nothing to think about.
 
 ## Install
 
@@ -25,10 +29,10 @@ install globally.
 
 | | |
 |---|---|
-| At session start | Reads `status --json` and shows coverage, worst locales first. Protected locales are excluded, as they are from the overall figure |
+| At session start | Reads `status --json` and shows coverage **only when keys are missing**, worst locales first. Protected locales are excluded, as they are from the overall figure |
 | While a kit tool runs | Renders MCP progress notifications live — batch by batch, locale by locale |
-| After a writing tool | Refreshes coverage (debounced) — `translate_missing`, `translate_key`, `write_translations`, `remove_translations`, `move_translation_key`, `scaffold` |
-| `/i18n-coverage` | Refresh on demand |
+| After a writing tool | Refreshes coverage (debounced) — `translate_missing`, `translate_key`, `write_translations`, `remove_translations`, `move_translation_key`, `scaffold`. If that leaves nothing missing, it reports what was resolved and withdraws |
+| `/i18n-coverage` | Answers on demand, including when there is nothing to report |
 
 Live progress needs a pi-mcp-adapter that bridges MCP progress notifications to
 tool updates. Without it the coverage line still works; only the progress line
@@ -39,6 +43,9 @@ stays quiet.
 | Variable | Effect |
 |---|---|
 | `I18N_KIT_WIDGET_PLACEMENT=aboveEditor` | Move the widget above the editor (default: below) |
+| `I18N_KIT_WIDGET_LINGER_MS` | How long a settled confirmation stays before withdrawing (default: 15000) |
+| `I18N_KIT_WIDGET_DEBOUNCE_MS` | Delay before refreshing after a tool writes (default: 1500) |
+| `I18N_KIT_WIDGET_DEBUG=<file>` | Append every decision the widget makes to a file |
 
 The extension prefers a project-local `the-i18n-cli`, then a global install,
 then `npx @the-i18n-kit/cli@latest`.

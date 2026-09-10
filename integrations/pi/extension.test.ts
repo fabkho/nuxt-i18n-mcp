@@ -37,8 +37,8 @@ const ONE_KEY_SHORT = {
 };
 
 describe("formatCoverage", () => {
-  it("says complete only when nothing is missing", () => {
-    expect(formatCoverage(COMPLETE)).toBe("🌐 i18n complete");
+  it("describes the settled state without claiming an event happened", () => {
+    expect(formatCoverage(COMPLETE)).toBe("🌐 all locales up to date");
   });
 
   it("never claims 100% next to missing keys", () => {
@@ -91,12 +91,15 @@ function harness(cwd: string, statusResults: string[]) {
   const handlers: Record<string, ((event: unknown, ctx: unknown) => unknown)[]> = {};
   const lines: (string | undefined)[] = [];
   let execCount = 0;
+  let commandHandler: ((args: string, ctx: unknown) => Promise<void>) | undefined;
 
   const pi = {
     on: (name: string, fn: (event: unknown, ctx: unknown) => unknown) => {
       (handlers[name] ??= []).push(fn);
     },
-    registerCommand: vi.fn(),
+    registerCommand: (_name: string, options: { handler: (args: string, ctx: unknown) => Promise<void> }) => {
+      commandHandler = options.handler;
+    },
     exec: vi.fn(async () => ({
       stdout: statusResults[Math.min(execCount++, statusResults.length - 1)],
       stderr: "",
@@ -122,6 +125,7 @@ function harness(cwd: string, statusResults: string[]) {
     fire: async (name: string, event: unknown) => {
       for (const handler of handlers[name] ?? []) await handler(event, ctx);
     },
+    command: async () => commandHandler?.("", ctx),
   };
 }
 
@@ -134,10 +138,18 @@ function projectDir(): string {
 }
 
 describe("event flow", () => {
-  it("shows coverage at session start", async () => {
-    const { fire, lines } = harness(projectDir(), [JSON.stringify(COMPLETE)]);
+  it("says nothing at session start when there is no work", async () => {
+    const { fire, lines, pi } = harness(projectDir(), [JSON.stringify(COMPLETE)]);
     await fire("session_start", {});
-    await vi.waitFor(() => expect(lines).toEqual(["🌐 i18n complete"]));
+    await vi.waitFor(() => expect(pi.exec).toHaveBeenCalled());
+    // It read the project, and chose to stay off screen.
+    await vi.waitFor(() => expect(lines).toEqual([undefined]));
+  });
+
+  it("shows outstanding work at session start", async () => {
+    const { fire, lines } = harness(projectDir(), [JSON.stringify(ONE_KEY_SHORT)]);
+    await fire("session_start", {});
+    await vi.waitFor(() => expect(lines[0]).toContain("26 missing"));
   });
 
   it("stays quiet outside an i18n-kit project", async () => {
@@ -176,6 +188,37 @@ describe("event flow", () => {
 
     await new Promise((resolve) => setTimeout(resolve, 2_500));
     expect(lines.length).toBe(1);
+  });
+
+  it("reports what a translate resolved, then withdraws", async () => {
+    vi.stubEnv("I18N_KIT_WIDGET_LINGER_MS", "300");
+    const { fire, lines } = harness(projectDir(), [JSON.stringify(ONE_KEY_SHORT), JSON.stringify(COMPLETE)]);
+
+    await fire("session_start", {});
+    await vi.waitFor(() => expect(lines[0]).toContain("26 missing"));
+
+    await fire("tool_execution_end", {
+      toolName: "mcp",
+      isError: false,
+      result: { content: [], details: { mode: "call", server: "the-i18n-mcp", tool: "translate_missing" } },
+    });
+
+    await vi.waitFor(() => expect(lines[1]).toBe("🌐 26 keys resolved · all locales up to date"), { timeout: 5_000 });
+    // and then it gets out of the way
+    await vi.waitFor(() => expect(lines.at(-1)).toBeUndefined(), { timeout: 5_000 });
+    vi.unstubAllEnvs();
+  });
+
+  it("answers an explicit request even when there is nothing to report", async () => {
+    vi.stubEnv("I18N_KIT_WIDGET_LINGER_MS", "300");
+    const { fire, lines, command } = harness(projectDir(), [JSON.stringify(COMPLETE)]);
+    await fire("session_start", {});
+    await vi.waitFor(() => expect(lines).toEqual([undefined]));
+
+    await command();
+    await vi.waitFor(() => expect(lines[1]).toBe("🌐 all locales up to date"));
+    await vi.waitFor(() => expect(lines.at(-1)).toBeUndefined(), { timeout: 5_000 });
+    vi.unstubAllEnvs();
   });
 
   it("renders progress notifications while a translate runs", async () => {
