@@ -55,7 +55,7 @@ const VUE_CONCAT_KEY = /(?<!\w)(this\.\$te?|\$te?|\bt)\s*\(\s*(['"])((?:(?!\2).)
 
 export const VUE_NUXT_PATTERNS: ScanPatternSet = {
   label: 'Vue / Nuxt',
-  filePatterns: ['**/*.vue', '**/*.ts', '**/*.tsx', '**/*.js', '**/*.jsx', '**/*.mjs', '**/*.mts'],
+  filePatterns: ['**/*.vue', '**/*.ts', '**/*.tsx', '**/*.cts', '**/*.js', '**/*.jsx', '**/*.mjs', '**/*.cjs', '**/*.mts'],
   ignoreDirs: ['node_modules', '.nuxt', '.output', 'dist', '.git', 'coverage', '.tmp'],
   staticKeyPatterns: [VUE_STATIC_KEY],
   dynamicKeyPatterns: [VUE_DYNAMIC_KEY],
