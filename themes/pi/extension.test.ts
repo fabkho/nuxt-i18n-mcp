@@ -12,8 +12,16 @@ import { describe, expect, it, vi } from "vitest";
 
 // Hoisted, because the module under test binds this import at load: mocking it
 // afterwards would leave the real one in place.
-const { statusRef } = vi.hoisted(() => ({ statusRef: { current: undefined as string | undefined } }));
-vi.mock("../../integrations/pi/extension.ts", () => ({ getI18nStatus: () => statusRef.current }));
+const { statusRef, persistentSurface } = vi.hoisted(() => ({
+  statusRef: { current: undefined as string | undefined },
+  persistentSurface: { declared: false },
+}));
+vi.mock("../../integrations/pi/extension.ts", () => ({
+  getI18nStatus: () => statusRef.current,
+  setI18nPersistentSurface: (present: boolean) => {
+    persistentSurface.declared = present;
+  },
+}));
 
 import extension from "./extension.ts";
 
@@ -102,6 +110,17 @@ describe("wrapping the editor", () => {
     await fire("turn_start");
 
     expect(renderEditor().at(-1)).toContain("🌐 4 missing");
+  });
+
+  it("tells the widget that coverage now has a permanent home", async () => {
+    const { pi, fire, installEditor } = harness();
+    persistentSurface.declared = false;
+    installEditor(fakeEditor);
+    extension(pi as never);
+
+    await fire("session_start");
+
+    expect(persistentSurface.declared).toBe(true);
   });
 
   it("does not wrap a wrapper", async () => {
