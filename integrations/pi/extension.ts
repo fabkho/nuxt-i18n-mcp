@@ -43,6 +43,8 @@ const STATUS_CHANNEL = Symbol.for("the-i18n-kit.pi.status");
 
 interface StatusChannel {
   value?: string;
+  /** Missing keys behind `value`, for a surface that must render it shorter. */
+  missing?: number;
   listeners: Set<(status: string | undefined) => void>;
   /** Set by a surface that renders coverage permanently, such as an editor border. */
   hasPersistentSurface?: boolean;
@@ -55,6 +57,11 @@ function statusChannel(): StatusChannel {
 
 export function getI18nStatus(): string | undefined {
   return statusChannel().value;
+}
+
+/** Missing keys as last read, or undefined when that read failed. */
+export function getI18nMissing(): number | undefined {
+  return statusChannel().missing;
 }
 
 /**
@@ -79,9 +86,10 @@ export function onI18nStatus(listener: (status: string | undefined) => void): ()
   return () => channel.listeners.delete(listener);
 }
 
-function announceStatus(status: string | undefined): void {
+function announceStatus(status: string | undefined, missing?: number): void {
   const channel = statusChannel();
   channel.value = status;
+  channel.missing = missing;
   for (const listener of channel.listeners) {
     try {
       listener(status);
@@ -136,6 +144,14 @@ const MAX_LISTED_LOCALES = 4;
  */
 function refreshDebounceMs(): number {
   return Number(process.env.I18N_KIT_WIDGET_DEBOUNCE_MS ?? 1_500);
+}
+
+/**
+ * How long to wait at session start for a permanent surface to declare itself,
+ * before saying the standing figure here instead.
+ */
+function borderGraceMs(): number {
+  return Number(process.env.I18N_KIT_BORDER_GRACE_MS ?? 400);
 }
 
 /** How long a "nothing to do" confirmation stays before the widget withdraws. */
@@ -641,7 +657,7 @@ export default function i18nKitWidget(pi: ExtensionAPI): void {
     if (process.env.I18N_KIT_STATUS === "off") return;
     const status = formatStatus(missing);
     ctx.ui.setStatus?.(STATUS_KEY, status);
-    announceStatus(status);
+    announceStatus(status, missing);
   };
 
   /**
@@ -708,10 +724,21 @@ export default function i18nKitWidget(pi: ExtensionAPI): void {
       }
     }
 
-    if (reason === "session-start" && missing > 0 && hasI18nPersistentSurface()) {
-      // Something durable is already showing this; a second copy that fades is
-      // just the same fact, twice.
-      setLine(ctx, undefined);
+    if (reason === "session-start" && missing > 0) {
+      /*
+       * A border declares itself when it wraps the editor, which it can only do
+       * once the extension owning that editor has installed one — possibly after
+       * this read has already landed. Deciding immediately would show the
+       * standing figure in both places for one session, so the decision waits a
+       * moment for the answer.
+       */
+      const line = formatOutstanding(status);
+      if (!line) return;
+      clearLinger();
+      setTimeout(() => {
+        if (hasI18nPersistentSurface()) return;
+        showTransient(ctx, line, "outstanding");
+      }, borderGraceMs());
       return;
     }
 

@@ -28,7 +28,7 @@ import type { EditorComponent } from "@earendil-works/pi-tui";
  */
 type EditorFactory = NonNullable<ReturnType<NonNullable<ExtensionContext["ui"]["getEditorComponent"]>>>;
 import { appendFileSync } from "node:fs";
-import { getI18nStatus, setI18nPersistentSurface } from "../../integrations/pi/extension.ts";
+import { getI18nMissing, getI18nStatus, setI18nPersistentSurface } from "../../integrations/pi/extension.ts";
 
 /** Same switch as the widget's, so one run explains both halves. */
 function debug(message: string, data?: unknown): void {
@@ -40,7 +40,31 @@ function debug(message: string, data?: unknown): void {
     // diagnostics never break the session
   }
 }
-import { injectIntoBorder, isBottomBorder } from "./border.ts";
+import { injectFirstThatFits, isBottomBorder, isTopBorder } from "./border.ts";
+
+/** Which edge of the frame carries the label. */
+type Placement = "top" | "bottom";
+
+function placement(): Placement {
+  return process.env.I18N_KIT_BORDER_PLACEMENT === "top" ? "top" : "bottom";
+}
+
+/**
+ * The label, longest first.
+ *
+ * A narrow pane has room for "🌐 4" but not "🌐 4 missing", and a label that
+ * vanishes on resize is worse than a terse one — silent absence being the
+ * failure mode this whole surface keeps having to avoid.
+ */
+function labelCandidates(): string[] {
+  const status = getI18nStatus();
+  if (!status) return [];
+  const missing = getI18nMissing();
+  const candidates = [status];
+  if (missing !== undefined && missing > 0) candidates.push(`🌐 ${missing}`);
+  candidates.push("🌐");
+  return candidates;
+}
 
 /** Marks an instance whose render has already been patched. */
 const PATCHED = Symbol.for("the-i18n-kit.border-patched");
@@ -55,23 +79,39 @@ const PATCHED = Symbol.for("the-i18n-kit.border-patched");
  * original, and the editor stops responding. One object, one state, one patched
  * method.
  */
-function labelBottomBorder(editor: EditorComponent, label: () => string | undefined): EditorComponent {
+function labelBorder(
+  editor: EditorComponent,
+  labels: () => string[],
+  style: (text: string) => string,
+): EditorComponent {
   const target = editor as EditorComponent & { [PATCHED]?: boolean };
   if (target[PATCHED]) return editor;
   target[PATCHED] = true;
 
   const original = editor.render.bind(editor);
+  const wanted = placement();
+  const matches = wanted === "top" ? isTopBorder : isBottomBorder;
+
   editor.render = (width: number): string[] => {
     const lines = original(width);
-    const text = label();
-    if (!text) return lines;
+    const candidates = labels().map(style);
+    if (candidates.length === 0) {
+      debug("render: no status to show");
+      return lines;
+    }
 
-    // Last border line, so a frame with autocomplete rows below the input is
-    // still labelled on its own edge rather than in the middle of the list.
-    for (let index = lines.length - 1; index >= 0; index -= 1) {
+    // Searched from the bottom for a bottom edge, from the top for a top one,
+    // so a frame with autocomplete rows below the input is still labelled on
+    // its own edge rather than somewhere in the list.
+    const order =
+      wanted === "top"
+        ? lines.map((_line, index) => index)
+        : lines.map((_line, index) => lines.length - 1 - index);
+
+    for (const index of order) {
       const line = lines[index]!;
-      if (!isBottomBorder(line)) continue;
-      const labelled = injectIntoBorder(line, text);
+      if (!matches(line)) continue;
+      const labelled = injectFirstThatFits(line, candidates);
       if (labelled === line) break;
       const next = [...lines];
       next[index] = labelled;
@@ -108,7 +148,15 @@ export default function i18nKitTheme(pi: ExtensionAPI): void {
     // change to it is already accompanied by a widget update from the kit
     // extension, and that is what asks the host for the next frame.
     const wrapped: EditorFactory = (tui, theme, keybindings) =>
-      labelBottomBorder(current(tui, theme, keybindings), getI18nStatus);
+      // Styled with the frame's own colour: the label is chrome, and chrome that
+      // introduces a colour of its own stops looking like part of the frame.
+      // Unstyled if the host offers no border colour — a label is still better
+      // than a crash.
+      labelBorder(
+        current(tui, theme, keybindings),
+        labelCandidates,
+        typeof theme?.borderColor === "function" ? theme.borderColor : (text: string) => text,
+      );
     (wrapped as { [WRAPPED]?: boolean })[WRAPPED] = true;
     ctx.ui.setEditorComponent?.(wrapped);
     // The widget can stop announcing standing coverage now that the border has it.

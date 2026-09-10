@@ -27,7 +27,17 @@ pi install npm:@the-i18n-kit/pi-theme
 ```
 
 Requires `@the-i18n-kit/pi`, which is where the coverage figure comes from.
-`I18N_KIT_BORDER=off` disables the label.
+
+| Variable | Effect |
+|---|---|
+| `I18N_KIT_BORDER=off` | No label |
+| `I18N_KIT_BORDER_PLACEMENT=top` | Label the top edge instead of the bottom |
+| `I18N_KIT_BORDER_GRACE_MS` | How long the widget waits for this to claim the figure (default 400) |
+
+The label wears the frame's own border colour, so it reads as part of the frame
+rather than as something bolted onto it, and it shortens rather than
+disappearing when the pane is narrow: `🌐 4 missing`, then `🌐 4`, then `🌐`,
+and only then nothing.
 
 ## What it shows
 

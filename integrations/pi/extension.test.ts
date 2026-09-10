@@ -626,6 +626,30 @@ describe("event flow", () => {
     expect(pi.exec).toHaveBeenCalledTimes(1);
   });
 
+  it("waits for a border to declare itself before saying the figure too", async () => {
+    vi.stubEnv("I18N_KIT_BORDER_GRACE_MS", "300");
+    const { fire, lines } = harness(projectDir(), [JSON.stringify(ONE_KEY_SHORT_WIDE)]);
+    await fire("session_start", {});
+
+    // The border wraps the editor a moment after the read lands, which is the
+    // race that showed the standing figure in both places for one session.
+    setI18nPersistentSurface(true);
+
+    await new Promise((resolve) => setTimeout(resolve, 600));
+    expect(lines.filter((line) => line !== undefined)).toEqual([]);
+    vi.unstubAllEnvs();
+  });
+
+  it("says the figure itself when nothing else claims it", async () => {
+    vi.stubEnv("I18N_KIT_BORDER_GRACE_MS", "50");
+    vi.stubEnv("I18N_KIT_WIDGET_LINGER_MS", "5000");
+    const { fire, lines } = harness(projectDir(), [JSON.stringify(ONE_KEY_SHORT_WIDE)]);
+    await fire("session_start", {});
+
+    await vi.waitFor(() => expect(lines[0]).toContain("26 keys missing"), { timeout: 5_000 });
+    vi.unstubAllEnvs();
+  });
+
   it("defers standing coverage at session start when a border carries it", async () => {
     setI18nPersistentSurface(true);
     const { fire, lines, statuses } = harness(projectDir(), [JSON.stringify(ONE_KEY_SHORT_WIDE)]);

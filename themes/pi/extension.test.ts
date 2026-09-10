@@ -12,12 +12,18 @@ import { describe, expect, it, vi } from "vitest";
 
 // Hoisted, because the module under test binds this import at load: mocking it
 // afterwards would leave the real one in place.
-const { statusRef, persistentSurface } = vi.hoisted(() => ({
+const { statusRef, missingRef, persistentSurface } = vi.hoisted(() => ({
   statusRef: { current: undefined as string | undefined },
+  missingRef: { current: undefined as number | undefined },
   persistentSurface: { declared: false },
 }));
-vi.mock("../../integrations/pi/extension.ts", () => ({
+
+// Partial, so an export added to that module later arrives here rather than
+// failing every test in this file — which it has done more than once.
+vi.mock("../../integrations/pi/extension.ts", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../../integrations/pi/extension.ts")>()),
   getI18nStatus: () => statusRef.current,
+  getI18nMissing: () => missingRef.current,
   setI18nPersistentSurface: (present: boolean) => {
     persistentSurface.declared = present;
   },
@@ -63,7 +69,16 @@ function fakeEditor(): Component {
   return new FakeEditor();
 }
 
-function harness(status: string | undefined = "🌐 4 missing") {
+/**
+ * tui, theme, keybindings — as pi passes them, with a border colour that emits
+ * real escape sequences: styling has to cost no width, and a fake that marks up
+ * with plain text would hide it if it did.
+ */
+const DIM = "\u001b[2m";
+const RESET = "\u001b[0m";
+const editorArgs = [{}, { borderColor: (text: string) => `${DIM}${text}${RESET}` }, {}] as never[];
+
+function harness(status: string | undefined = "🌐 4 missing", missing: number | undefined = 4) {
   const handlers: Record<string, ((event: unknown, ctx: unknown) => unknown)[]> = {};
   let installed: ((...args: never[]) => Component) | undefined;
 
@@ -90,6 +105,7 @@ function harness(status: string | undefined = "🌐 4 missing") {
 
   // The status the border reads comes from the kit extension's module state.
   statusRef.current = status;
+  missingRef.current = missing;
 
   return {
     pi,
@@ -98,9 +114,9 @@ function harness(status: string | undefined = "🌐 4 missing") {
       for (const handler of handlers[name] ?? []) await handler(event, ctx);
     },
     /** What the editor renders now, through whatever wrapping is in place. */
-    renderEditor: () => installed?.(...([{}, {}, {}] as never[])).render(120) ?? [],
+    renderEditor: () => installed?.(...editorArgs).render(120) ?? [],
     /** The component the installed factory builds, as the host would get it. */
-    editorInstance: () => installed?.(...([{}, {}, {}] as never[])),
+    editorInstance: () => installed?.(...editorArgs),
     installEditor: (factory: (...args: never[]) => Component) => {
       installed = factory;
     },
@@ -144,6 +160,60 @@ describe("keeping the editor working", () => {
 
     const line = (editorInstance()?.render(120) ?? []).at(-1) ?? "";
     expect(line.match(/🌐/gu) ?? []).toHaveLength(1);
+  });
+});
+
+describe("the label itself", () => {
+  it("wears the frame's own colour", async () => {
+    const { pi, fire, installEditor, renderEditor } = harness();
+    installEditor(fakeEditor);
+    extension(pi as never);
+    await fire("session_start");
+
+    expect(renderEditor().at(-1)).toContain(`${DIM}🌐 4 missing${RESET}`);
+  });
+
+  it("shortens rather than vanishing when the border is narrow", async () => {
+    const narrow = "╰─ main * ───────────── vue ─╯";
+    const { pi, fire, installEditor, editorInstance } = harness();
+    installEditor(() => ({
+      render: () => ["╭─ 1m ──────────────────────╮", "│ hi", narrow],
+      invalidate: () => {},
+    }));
+    extension(pi as never);
+    await fire("session_start");
+
+    const line = (editorInstance()?.render(30) ?? []).at(-1) ?? "";
+    expect(line).toContain("🌐 4");
+    expect(line).not.toContain("missing");
+  });
+
+  it("falls back to the marker alone when even the count will not fit", async () => {
+    const tiny = "╰─ main ────────── vue ─╯";
+    const { pi, fire, installEditor, editorInstance } = harness("🌐 1234567 missing", 1234567);
+    installEditor(() => ({
+      render: () => ["╭──────────────────────╮", "│ hi", tiny],
+      invalidate: () => {},
+    }));
+    extension(pi as never);
+    await fire("session_start");
+
+    const line = (editorInstance()?.render(24) ?? []).at(-1) ?? "";
+    expect(line).toContain("🌐");
+    expect(line).not.toContain("1234567");
+  });
+
+  it("can label the top edge instead", async () => {
+    vi.stubEnv("I18N_KIT_BORDER_PLACEMENT", "top");
+    const { pi, fire, installEditor, renderEditor } = harness();
+    installEditor(fakeEditor);
+    extension(pi as never);
+    await fire("session_start");
+
+    const lines = renderEditor();
+    expect(lines[0]).toContain("🌐 4 missing");
+    expect(lines.at(-1)).not.toContain("🌐");
+    vi.unstubAllEnvs();
   });
 });
 

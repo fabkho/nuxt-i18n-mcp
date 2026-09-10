@@ -53,13 +53,21 @@ function findRuns(line: string): Run[] {
   return runs;
 }
 
+/** Escape sequences occupy no cells, so they are removed before measuring. */
+const ANSI = /\u001b\[[0-9;]*m/gu;
+
+export function stripAnsi(text: string): string {
+  return text.replace(ANSI, "");
+}
+
 /**
  * Visible width of `text`, counting an emoji as the two cells a terminal gives
- * it. Enough for the labels this places; not a general-purpose width function.
+ * it and styling as none. Enough for the labels this places; not a
+ * general-purpose width function.
  */
 export function labelWidth(text: string): number {
   let width = 0;
-  for (const character of text) {
+  for (const character of stripAnsi(text)) {
     const code = character.codePointAt(0) ?? 0;
     const wide =
       (code >= 0x1f300 && code <= 0x1faff) || // pictographs
@@ -102,5 +110,24 @@ export function injectIntoBorder(line: string, label: string, options: InjectOpt
 
 /** Whether a line looks like the bottom edge of a frame. */
 export function isBottomBorder(line: string): boolean {
-  return /[╰└][^\n]*[╯┘]\s*$/u.test(line.replace(/\u001b\[[0-9;]*m/gu, ""));
+  return /[╰└][^\n]*[╯┘]\s*$/u.test(stripAnsi(line));
+}
+
+/** Whether a line looks like the top edge of a frame. */
+export function isTopBorder(line: string): boolean {
+  return /[╭┌][^\n]*[╮┐]\s*$/u.test(stripAnsi(line));
+}
+
+/**
+ * Place the first label that fits, from longest to shortest.
+ *
+ * A border too narrow for "🌐 4 missing" still has room for "🌐 4", and a label
+ * that silently disappears when a pane is resized is worse than a terse one.
+ */
+export function injectFirstThatFits(line: string, labels: string[], options: InjectOptions = {}): string {
+  for (const label of labels) {
+    const injected = injectIntoBorder(line, label, options);
+    if (injected !== line) return injected;
+  }
+  return line;
 }
