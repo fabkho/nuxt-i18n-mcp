@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 
 import { localesWithFailures } from '../../src/surface/guidance.js'
 import { resolveExitCode } from '../../src/commands/_shared.js'
-import type { TranslateMissingOutcome } from '../../src/core/types.js'
+import type { TranslateMissingOutcome } from '../../src/core/translate/run.js'
 
 /**
  * A translate run that writes most keys and loses the rest exits 0: exit 1 is

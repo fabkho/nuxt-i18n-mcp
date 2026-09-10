@@ -17,7 +17,7 @@ export { discoverNuxtApps } from '../adapters/nuxt/discovery'
 // The cache itself lives in ./cache, which owns every memo that has to be
 // forgotten together. Re-exported here because this has been its import path
 // since before there was more than one thing to clear.
-export { clearConfigCache, getCachedConfig } from './cache'
+export { clearConfigCache, clearConfigCacheFor, getCachedConfig } from './cache'
 
 registerAdapter(new NuxtAdapter())
 registerAdapter(new LaravelAdapter())
@@ -34,12 +34,14 @@ export async function detectI18nConfig(projectDir: string): Promise<I18nConfig> 
 
   log.info(`Detecting i18n config from: ${projectDir}`)
 
-  // Read once for the whole detection and handed to the adapter, which is what
-  // makes the deprecated-key warning fire once rather than once per app.
+  // Read once for the whole detection and handed to both halves of it: the
+  // adapters score against it and the winner resolves from it. That is what
+  // makes the deprecated-key warning, and the "found project config" line,
+  // fire once per run rather than once per adapter and app.
   const projectConfig = await loadProjectConfig(projectDir)
   const hint = projectConfig?.framework
 
-  const adapter = await detectFramework(projectDir, hint)
+  const adapter = await detectFramework(projectDir, hint, projectConfig)
   log.info(`Detected framework: ${adapter.label}`)
 
   const config = await adapter.resolve(projectDir, projectConfig)

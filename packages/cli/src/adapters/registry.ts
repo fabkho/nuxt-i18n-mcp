@@ -1,4 +1,5 @@
 import type { FrameworkAdapter } from './types'
+import type { ProjectConfig } from '../config/types'
 import { ConfigError, toErrorMessage } from '../utils/errors'
 import { log } from '../utils/logger'
 
@@ -55,10 +56,16 @@ export interface FrameworkMatch {
  * only the winner; `init` needs the score to tell a user why Nuxt was chosen
  * over generic, and a bare directory needs to be distinguishable from a
  * confident match rather than surfacing as a thrown error.
+ *
+ * `projectConfig` is the project's own declaration, already loaded by the
+ * caller. Passing it is what keeps one run to one read of it: scoring and
+ * resolving both need it, and an adapter left to load it for itself reads and
+ * reports the same files a second time.
  */
 export async function detectFrameworkMatch(
   projectDir: string,
   hint?: string,
+  projectConfig?: ProjectConfig | null,
 ): Promise<FrameworkMatch | undefined> {
   if (adapters.length === 0) {
     throw new ConfigError('No framework adapters registered.')
@@ -76,7 +83,7 @@ export async function detectFrameworkMatch(
   const scores = await Promise.all(
     adapters.map(async (adapter) => {
       try {
-        return { adapter, confidence: await adapter.detect(projectDir) }
+        return { adapter, confidence: await adapter.detect(projectDir, projectConfig) }
       }
       catch (error) {
         log.warn(`Adapter '${adapter.name}' detection failed: ${toErrorMessage(error)}`)
@@ -99,8 +106,9 @@ export async function detectFrameworkMatch(
 export async function detectFramework(
   projectDir: string,
   hint?: string,
+  projectConfig?: ProjectConfig | null,
 ): Promise<FrameworkAdapter> {
-  const match = await detectFrameworkMatch(projectDir, hint)
+  const match = await detectFrameworkMatch(projectDir, hint, projectConfig)
   if (match) return match.adapter
 
   if (hint) {

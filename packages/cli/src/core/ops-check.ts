@@ -22,7 +22,7 @@ import type { DynamicKeyUsage, KeyUsage, ScanResult, ScanUnit } from '../scanner
 import { getPatternSet } from '../scanner/patterns.js'
 import { ToolError } from '../utils/errors.js'
 
-import { findWritableLayerOrThrow, resolveReferenceLocale } from './shared.js'
+import { findWritableLayerOrThrow, nonAliasLayers, resolveReferenceLocale } from './shared.js'
 import { buildOrphanScanPlan, resolveDeclaredNamespaces, resolveOrphanIgnorePatterns } from './ops-orphans.js'
 import { writeTranslations } from './ops-write.js'
 
@@ -182,7 +182,7 @@ interface CheckScanPlan {
 }
 
 function buildCheckScanPlan(config: I18nConfig, projectDir: string, scanDirs: string[] | undefined): CheckScanPlan {
-  const allLayerNames = config.localeDirs.filter(d => !d.aliasOf).map(d => d.layer)
+  const allLayerNames = nonAliasLayers(config).map(d => d.layer)
 
   // An empty scanDirs array means "not provided" (matches the orphan ops).
   if (scanDirs?.length) {
@@ -343,7 +343,11 @@ function classifyUnitUsages(scan: ScanResult, ctx: UnitCheckContext): UnitCheckO
     ...[...scan.bareDynamicCandidates].map(expression => ({ expression })),
   ])
 
-  classifyStaticKeys(scan.usages, dynRegexes, ctx, outcome)
+  // A component's own `<i18n>` block is the definition of the keys it uses, so
+  // those usages resolve without any locale file carrying them.
+  const usages = scan.usages.filter(u => !scan.localDefinitions.get(u.file)?.has(u.key))
+
+  classifyStaticKeys(usages, dynRegexes, ctx, outcome)
   classifyDynamicUsages(scan.dynamicKeys, ctx, outcome)
   return outcome
 }
@@ -375,7 +379,7 @@ function resolveExtractionLayer(
   // project's own layers are the candidates then, which is still one answer for
   // a single-layer project.
   if (candidates.size === 0) {
-    for (const localeDir of config.localeDirs.filter(d => !d.aliasOf)) candidates.add(localeDir.layer)
+    for (const localeDir of nonAliasLayers(config)) candidates.add(localeDir.layer)
   }
 
   const [only] = candidates
@@ -496,7 +500,9 @@ export async function checkUndefinedKeys(opts: {
   const { localeCode, localeDef } = resolveReferenceLocale(config, opts.locale)
 
   const pathsByLayer = new Map<string, Set<string>>()
-  for (const localeDir of config.localeDirs.filter(d => !d.aliasOf)) {
+  // Not resolveLayersToScan: a project with no locale dirs at all reports its
+  // used keys as undefined rather than refusing to check.
+  for (const localeDir of nonAliasLayers(config)) {
     pathsByLayer.set(localeDir.layer, await layerKeyPaths(config, localeDir.layer, localeDef))
   }
 

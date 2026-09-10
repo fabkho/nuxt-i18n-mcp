@@ -7,6 +7,7 @@
  * the project as it was.
  */
 import type { I18nConfig } from './types.js'
+import { canonicalPath } from './paths.js'
 import { log } from '../utils/logger.js'
 
 const configs = new Map<string, I18nConfig>()
@@ -28,6 +29,27 @@ export function getCachedConfig(): I18nConfig | null {
   return lastConfig
 }
 
+/**
+ * Forget one project, leaving the others alone — a process that has resolved
+ * several (an MCP server across a session, a command given an explicit
+ * projectDir) should not lose all of them because one was re-detected.
+ *
+ * Takes the directory in any spelling and canonicalizes it the way
+ * {@link cacheConfig}'s callers do.
+ */
+export function clearConfigCacheFor(dir: string): void {
+  const canonicalDir = canonicalPath(dir)
+  const cleared = configs.get(canonicalDir)
+  if (cleared === undefined) return
+
+  configs.delete(canonicalDir)
+  // getCachedConfig() answers with lastConfig, so leaving it on the entry just
+  // forgotten would keep handing out exactly what was cleared.
+  if (lastConfig === cleared) lastConfig = null
+  log.debug(`Config cache cleared for ${canonicalDir}`)
+}
+
+/** Forget every project. The whole-process reset, and what tests reach for. */
 export function clearConfigCache(): void {
   configs.clear()
   lastConfig = null

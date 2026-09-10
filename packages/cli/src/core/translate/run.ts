@@ -17,20 +17,10 @@ import { log } from '../../utils/logger.js'
 import { ToolError, toErrorMessage } from '../../utils/errors.js'
 
 import type {
-  TranslateFn,
-  TranslateLayerTotals,
-  TranslateMode,
-  TranslateFailReason,
-  TranslateKeyLocaleIssue,
-  TranslateKeySkip,
-  TranslateMissingLocaleResult,
-  TranslateMissingOptions,
+  LocaleRefInfo,
   PlaceholderValidationResult,
-  TranslateKeyResult,
-  TranslateMissingResult,
-  TranslateMissingOutcome,
-  TranslateAllLayersResult,
-  TranslateAllLayersSummary,
+  ProgressFn,
+  TranslateFn,
 } from '../types.js'
 import { findWritableLayerOrThrow, findReferenceLocaleOrThrow, findLocaleOrThrow, localeRefInfo } from '../shared.js'
 import { resolveTranslateTargets, collectProtectedLocaleResults, partitionTranslateKeyTargets } from './targets.js'
@@ -42,6 +32,198 @@ import { requestWithRetry } from './retry.js'
 import type { TranslateRunState } from './retry.js'
 import { planBatches, expansionFor, TRANSLATE_MAX_TOKENS, TRANSLATE_BUDGET_CHARS } from './batching.js'
 import type { KeyEntry } from './batching.js'
+
+// ─── translate_missing ───────────────────────────────────────
+
+/** How a translate run was (or would be) executed. */
+export type TranslateMode = 'provider' | 'agent' | 'dry-run'
+
+/** Why a key could not be translated. */
+export type TranslateFailReason =
+  | 'provider-error'
+  | 'omitted-by-model'
+  | 'placeholder-mismatch'
+  | 'plural-mismatch'
+  | 'write-error'
+  | 'truncated'
+
+/** Why a key or locale was intentionally not attempted. */
+export type TranslateSkipReason = 'no-provider' | 'already-translated' | 'protected-locale'
+
+/** What translate_missing accepts. `layer` omitted means every layer at once. */
+export interface TranslateMissingOptions {
+  layer?: string
+  referenceLocale?: string
+  targetLocales?: string[]
+  locales?: string[]
+  keys?: string[]
+  batchSize?: number
+  dryRun?: boolean
+  compact?: boolean
+  projectDir?: string
+  /**
+   * Also re-translate keys whose target was written from source text that has
+   * changed since (translation memory only). Off by default: without it the
+   * operation still never touches an existing value, it only reports the stale
+   * ones in `stale`.
+   */
+  overwriteStale?: boolean
+  translateFn?: TranslateFn
+  progressFn?: ProgressFn
+  /** Called once after the pre-scan with the computed total number of progress steps. */
+  onProgressTotal?: (total: number) => void
+}
+
+export interface TranslateMissingLocaleResult {
+  mode: TranslateMode
+  /** Number of missing keys found for this locale. Always equals
+   *  translated + wouldTranslate + failed + skipped. */
+  missing: number
+  translated: string[]
+  /** Dry-run only: keys that would be translated. */
+  wouldTranslate?: string[]
+  failed: Array<{ key: string, reason: TranslateFailReason }>
+  skipped: Array<{ key: string, reason: TranslateSkipReason }>
+  /**
+   * Translation-memory only: keys whose target value was written from source
+   * text that has changed since, and which this run left untouched. A bucket of
+   * its own, not part of `missing` — these keys are translated, just outdated —
+   * so the invariant above still holds. Re-translating them needs
+   * `overwriteStale`, which counts them into `missing` instead.
+   */
+  stale?: string[]
+  /** Provider requests issued for this locale, splits and re-asks of a cut-off batch included. */
+  batches?: number
+  model?: string
+  writeError?: string
+  placeholderValidation?: PlaceholderValidationResult
+}
+
+/** One locale's digest in compact mode: counts rather than key lists. */
+export interface TranslateMissingCompactEntry {
+  locale: string
+  mode: TranslateMode
+  missing: number
+  translated: number
+  failed: number
+  skipped: number
+  wouldTranslate?: number
+  stale?: number
+  /** Provider requests issued for this locale, splits and re-asks of a cut-off batch included. */
+  batches?: number
+  model?: string
+  writeError?: string
+}
+
+export interface TranslateMissingResult {
+  /** Absent in compact mode, which returns `summary.byLocale` instead. */
+  results?: Record<string, TranslateMissingLocaleResult>
+  fallbackContexts?: Record<string, Record<string, unknown>>
+  summary: {
+    /** Compact mode only: a per-locale digest in place of full `results`. */
+    byLocale?: TranslateMissingCompactEntry[]
+    mode: TranslateMode
+    totalTranslated: number
+    totalFailed: number
+    totalSkipped: number
+    totalWouldTranslate?: number
+    /** Translation-memory only: stale keys left untouched, across all locales. */
+    staleCount?: number
+    layer: string
+    referenceLocale: string | LocaleRefInfo
+    targetLocales: Array<string | LocaleRefInfo>
+    dryRun: boolean
+    /** Surface-owned guidance (set by the CLI command or MCP tool, not the core). */
+    message?: string
+  }
+}
+
+/**
+ * Per-layer totals in the all-layers translate summary (`summary.byLayer`).
+ * Field names mirror the cross-layer summary totals so consumers parse both
+ * with the same accessors. `totalWouldTranslate` is always present (0 outside
+ * dry runs).
+ */
+export interface TranslateLayerTotals {
+  layer: string
+  totalTranslated: number
+  totalFailed: number
+  totalSkipped: number
+  totalWouldTranslate: number
+}
+
+/** Aggregated summary across every locale-backed layer. */
+export interface TranslateAllLayersSummary {
+  mode: TranslateMode
+  totalTranslated: number
+  totalFailed: number
+  totalSkipped: number
+  totalWouldTranslate?: number
+  /** Translation-memory only: stale keys left untouched, across all layers and locales. */
+  staleCount?: number
+  /** Layer names that were translated. */
+  layers: string[]
+  byLayer: TranslateLayerTotals[]
+  dryRun: boolean
+  referenceLocale?: string | LocaleRefInfo
+  targetLocales?: Array<string | LocaleRefInfo>
+  /** Surface-owned guidance (set by the CLI command or MCP tool). */
+  message?: string
+}
+
+/**
+ * All-layers mode (`--layer` omitted): one result per layer plus an aggregated
+ * summary. Discriminate with `'layers' in result` — both members carry a
+ * `summary`, and both summaries carry `mode`, so mode checks need no narrowing.
+ */
+export interface TranslateAllLayersResult {
+  layers: Record<string, TranslateMissingResult>
+  summary: TranslateAllLayersSummary
+}
+
+/** What translateMissing returns: depends on whether a layer was named. */
+export type TranslateMissingOutcome = TranslateMissingResult | TranslateAllLayersResult
+
+// ─── translate_key ──────────────────────────────────────────
+
+export interface TranslateKeyLocaleIssue {
+  locale: string
+  reason: TranslateFailReason | 'read-error'
+  detail?: string
+}
+
+/**
+ * One locale translate_key deliberately left alone. `reason` is a closed set;
+ * `stale` refines 'already-translated' rather than extending it, so a caller
+ * can tell an existing translation that still matches its source from one the
+ * source has since outgrown.
+ */
+export interface TranslateKeySkip {
+  locale: string
+  reason: TranslateSkipReason
+  /** Translation-memory only: whether the existing value is out of date. */
+  stale?: boolean
+}
+
+export interface TranslateKeyResult {
+  key: string
+  sourceLocale: LocaleRefInfo
+  updatedSource: boolean
+  mode: TranslateMode
+  translated: string[]
+  /** Dry-run only: locales that would be translated. */
+  wouldTranslate?: string[]
+  skipped: TranslateKeySkip[]
+  failed: TranslateKeyLocaleIssue[]
+  filesWritten: number
+  dryRun: boolean
+  model?: string
+  placeholderValidation: PlaceholderValidationResult
+  preview?: Record<string, string>
+  fallbackContext?: Record<string, unknown>
+  /** Surface-owned guidance (set by the CLI command or MCP tool, not the core). */
+  message?: string
+}
 
 /**
  * How often a batch that came back truncated may be halved before its keys are
@@ -152,7 +334,10 @@ export async function translateMissing(opts: TranslateMissingOptions): Promise<T
       let scanData: Record<string, unknown> = {}
       try {
         scanData = await readLocaleData(config, layer, target)
-      } catch {}
+      }
+      catch (err) {
+        log.warn(`Cannot read locale '${target.code}' of layer '${layer}' for the progress pre-scan: ${toErrorMessage(err)}`)
+      }
       preScanCounts.push(missingKeysIn(scanData).length
         + (overwriteStale ? staleKeysIn(scanData, target.code).length : 0))
     }
@@ -174,7 +359,12 @@ export async function translateMissing(opts: TranslateMissingOptions): Promise<T
     let targetData: Record<string, unknown> = {}
     try {
       targetData = await readLocaleData(config, layer, target)
-    } catch {}
+    }
+    catch (err) {
+      // Every key then reads as missing for this locale; the write that follows
+      // re-reads the same file and fails there rather than here.
+      log.warn(`Cannot read locale '${target.code}' of layer '${layer}': ${toErrorMessage(err)}`)
+    }
     targetDataCache.set(target.code, targetData)
   }
 

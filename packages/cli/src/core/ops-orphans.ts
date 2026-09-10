@@ -14,12 +14,180 @@ import { scanSourceFiles, toRelativePath, findOrphanKeysForConfig, buildIgnorePa
 import type { OrphanScanPlan, OrphanScanProgress, OrphanScanResult } from '../scanner/code-scanner.js'
 import { collectLinkedTargets } from '../scanner/linked-messages.js'
 import { getPatternSet } from '../scanner/patterns.js'
-import type { DeclaredNamespaceRef, FindOrphanKeysResult, RemoveOrphanKeysResult, CodeUsageResult, ProgressFn } from './types.js'
+import type { ProgressFn } from './types.js'
 import { ToolError } from '../utils/errors.js'
 
 import { log } from '../utils/logger.js'
 
-import { findLayerOrThrow, resolveReferenceLocale } from './shared.js'
+import { resolveLayersToScan, resolveReferenceLocale } from './shared.js'
+
+// ─── Refs the three scans share ──────────────────────────────────
+
+/** A key referenced only from apps outside its layer's consumption scope. */
+export interface MisplacedUsageRef {
+  key: string
+  /** Layer the key is defined in. */
+  layer: string
+  /** Out-of-scope scan units (apps or layers) where the key was found. */
+  usingApps: string[]
+}
+
+export interface DynamicKeyRef {
+  expression: string
+  /** Absent for context-free bare candidates, which have no single call site. */
+  file?: string
+  line?: number
+}
+
+export interface UnresolvedKeyWarningRef {
+  expression: string
+  file: string
+  line: number
+  callee: string
+  suggestedIgnorePattern?: string
+}
+
+/**
+ * One `declaredNamespaces` entry with the keys it answers for.
+ *
+ * `matchedKeys` is what makes a declaration auditable in both directions: the
+ * keys a reader would otherwise see in the orphan list, and — when it is empty
+ * — a declaration whose namespace no longer exists.
+ */
+export interface DeclaredNamespaceRef {
+  pattern: string
+  /** What keeps these keys alive, as declared in the config. */
+  reason: string
+  /** Keys of the checked layers this pattern covers. Empty means the declaration is stale. */
+  matchedKeys: string[]
+}
+
+export interface CodeUsageRef {
+  file: string
+  line: number
+  callee: string
+}
+
+// ─── find_orphan_keys ───────────────────────────────────────
+
+export interface FindOrphanKeysResult {
+  orphanKeys: Record<string, string[]>
+  uncertainKeys?: Record<string, string[]>
+  /**
+   * Keys kept alive solely by the bare-candidate net — nothing a frontend
+   * could call a usage references them; a dotted string somewhere (a comment,
+   * a data structure) merely shares their name. Not orphans, but where dead
+   * references hide.
+   */
+  candidateOnlyKeys?: Record<string, string[]>
+  candidateOnlyNote?: string
+  /** Why keys linked with `@:` from another message's value are not orphans. Present when any is. */
+  linkedNote?: string
+  /** Keys used only from apps that do not consume the owning layer. */
+  misplacedUsages?: MisplacedUsageRef[]
+  misplacedUsageNote?: string
+  /** Every declared namespace with the keys it covers. Present when any is declared. */
+  declaredNamespaces?: DeclaredNamespaceRef[]
+  declaredNamespaceNote?: string
+  summary: {
+    totalKeys: number
+    orphanCount: number
+    uncertainCount?: number
+    candidateOnlyCount?: number
+    misplacedCount?: number
+    dynamicMatchedCount?: number
+    ignoredCount?: number
+    /** Keys withheld from the orphan list by a declared namespace. */
+    declaredCount?: number
+    /** Keys withheld because another message's value links to them with `@:`. */
+    linkedCount?: number
+    usedCount?: number
+    filesScanned: number
+    /** Files a syntax frontend declined; pattern matching read them instead. */
+    filesDeclined?: number
+    layersChecked?: string[]
+    dirsScanned?: string[]
+    scanScope?: Record<string, string[]>
+    locale?: string
+    message?: string
+  }
+  dynamicKeyWarning?: string
+  dynamicKeys?: DynamicKeyRef[]
+  unresolvedKeyWarnings?: UnresolvedKeyWarningRef[]
+}
+
+// ─── scan_code_usage ────────────────────────────────────────
+
+/** Where each requested key is referenced in source. */
+export interface CodeUsageResult {
+  usages: Record<string, CodeUsageRef[]>
+  /** Requested keys with no reference anywhere in the scanned source. */
+  notFoundInCode?: string[]
+  /** Dynamic expressions that could reach the requested keys. */
+  dynamicKeys?: DynamicKeyRef[]
+  summary: {
+    uniqueKeysFound: number
+    totalReferences: number
+    filesScanned: number
+    /** Files a syntax frontend declined; pattern matching read them instead. */
+    filesDeclined?: number
+    dirsScanned?: string[]
+    message?: string
+  }
+}
+
+export interface ScanCodeUsageResult {
+  usages: Record<string, CodeUsageRef[]>
+  summary: {
+    uniqueKeysFound: number
+    totalReferences: number
+    filesScanned: number
+    /** Files a syntax frontend declined; pattern matching read them instead. */
+    filesDeclined?: number
+    dirsScanned: string[]
+  }
+  notFoundInCode?: string[]
+  dynamicKeys?: DynamicKeyRef[]
+}
+
+// ─── remove_orphan_keys ──────────────────────────────────────
+
+export interface RemoveOrphanKeysResult {
+  orphanKeys?: Record<string, string[]>
+  removed?: Record<string, string[]>
+  uncertainKeys?: Record<string, string[]>
+  misplacedUsages?: MisplacedUsageRef[]
+  misplacedUsageNote?: string
+  /** Every declared namespace with the keys it covers — the keys this run will not delete. */
+  declaredNamespaces?: DeclaredNamespaceRef[]
+  declaredNamespaceNote?: string
+  summary: {
+    dryRun?: boolean
+    totalKeys: number
+    orphanCount?: number
+    removedCount?: number
+    uncertainCount?: number
+    misplacedCount?: number
+    dynamicMatchedCount?: number
+    ignoredCount?: number
+    /** Keys withheld from the orphan list by a declared namespace. */
+    declaredCount?: number
+    /** Keys withheld because another message's value links to them with `@:`. */
+    linkedCount?: number
+    usedCount?: number
+    remainingCount?: number
+    filesScanned?: number
+    filesWritten?: number
+    layersChecked?: string[]
+    dirsScanned?: string[]
+    scanScope?: Record<string, string[]>
+    locale?: string
+    message?: string
+  }
+  dynamicKeyWarning?: string
+  dynamicKeys?: DynamicKeyRef[]
+  unresolvedKeyWarnings?: UnresolvedKeyWarningRef[]
+}
 
 const MISPLACED_USAGE_NOTE
   = 'Keys referenced only from apps that do not consume their layer. '
@@ -281,8 +449,11 @@ function buildDeclaredNamespaceRefs(
  *
  * Every locale is read, not just the reference one: a link is a property of
  * one translation's text, and a translator who wrote `@:a.b` in en-GB alone
- * still made `a.b` live for every app that renders that message. An
- * unreadable locale is skipped, the same as in the catalog read.
+ * still made `a.b` live for every app that renders that message.
+ *
+ * A locale with no file in the layer reads as no links. A file that cannot be
+ * read throws: this set is what keeps linked keys out of the orphan list, and
+ * a link nobody could see would surface the key as safe to delete.
  */
 async function collectLinkedMessageTargets(
   config: I18nConfig,
@@ -291,13 +462,7 @@ async function collectLinkedMessageTargets(
   const targets = new Set<string>()
   for (const layer of layers) {
     for (const localeDef of config.locales) {
-      let data: Record<string, unknown>
-      try {
-        data = await readLocaleData(config, layer, localeDef)
-      } catch {
-        continue
-      }
-      collectLinkedTargets(data, targets)
+      collectLinkedTargets(await readLocaleData(config, layer, localeDef), targets)
     }
   }
   return targets
@@ -322,32 +487,23 @@ async function resolveOrphanScanContext(
 }> {
   const { localeCode, localeDef } = resolveReferenceLocale(config, opts.locale)
 
-  const layersToCheck = opts.layer
-    ? config.localeDirs.filter(d => d.layer === opts.layer)
-    : config.localeDirs.filter(d => !d.aliasOf)
+  const layersToCheck = resolveLayersToScan(config, opts.layer)
 
-  if (layersToCheck.length === 0) {
-    if (opts.layer) {
-      findLayerOrThrow(config, opts.layer)
-    }
-    throw new ToolError('No locale directories found.', 'LAYER_NOT_FOUND')
-  }
-
-  if (opts.layer && layersToCheck[0]?.aliasOf) {
+  // Only a named layer can be an alias here: the every-layer selection has
+  // already dropped them.
+  if (layersToCheck[0]?.aliasOf) {
     throw new ToolError(
       `Layer "${opts.layer}" is an alias of "${layersToCheck[0].aliasOf}". Use the target layer instead.`,
       'LAYER_IS_ALIAS',
     )
   }
 
+  // The catalog every orphan verdict is computed against. A layer without the
+  // reference locale contributes no keys; a layer whose file cannot be read
+  // throws, because "no keys here" is what makes a key an orphan.
   const keysByLayer = new Map<string, { keys: string[]; localeDir: LocaleDir }>()
   for (const ld of layersToCheck) {
-    let data: Record<string, unknown>
-    try {
-      data = await readLocaleData(config, ld.layer, localeDef)
-    } catch {
-      continue
-    }
+    const data = await readLocaleData(config, ld.layer, localeDef)
     if (Object.keys(data).length === 0) continue
     keysByLayer.set(ld.layer, { keys: getLeafKeys(data), localeDir: ld })
   }
@@ -655,16 +811,14 @@ export async function removeOrphanKeys(opts: {
     if (ld.aliasOf) continue
 
     for (const localeDef2 of config.locales) {
-      try {
-        const written = await mutateLocaleData(config, layerName, localeDef2, (fileData) => {
-          for (const key of orphans) {
-            removeNestedValue(fileData, key)
-          }
-        })
-        totalFilesWritten += written.size
-      } catch {
-        continue
-      }
+      // Not tolerated: a locale whose file failed to rewrite would be reported
+      // as having had its orphans removed.
+      const written = await mutateLocaleData(config, layerName, localeDef2, (fileData) => {
+        for (const key of orphans) {
+          removeNestedValue(fileData, key)
+        }
+      })
+      totalFilesWritten += written.size
     }
 
     removedByLayer[layerName] = orphans

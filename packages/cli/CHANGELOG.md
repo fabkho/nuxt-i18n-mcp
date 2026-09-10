@@ -1,5 +1,52 @@
 # Changelog
 
+## [8.3.0](https://github.com/fabkho/the-i18n-kit/compare/the-i18n-kit-cli-8.2.1...the-i18n-kit-cli-8.3.0) (2026-09-10)
+
+
+### Features
+
+* **scanner:** count an SFC's own &lt;i18n&gt; block as definitions of the keys it uses ([5f4062a](https://github.com/fabkho/the-i18n-kit/commit/5f4062af52e0eb1b02f154fa686bcb135a3bef05))
+* **scanner:** decline per block, read chosen keys, the remaining vue-i18n idioms ([#504](https://github.com/fabkho/the-i18n-kit/issues/504)) ([5f4062a](https://github.com/fabkho/the-i18n-kit/commit/5f4062af52e0eb1b02f154fa686bcb135a3bef05))
+
+
+### Bug Fixes
+
+* **cli:** fail destructive operations on an unreadable locale file ([ec2fb04](https://github.com/fabkho/the-i18n-kit/commit/ec2fb045fa3fa93806f8a80fbbd55347e2606190))
+* **cli:** load the project config once per run ([ec2fb04](https://github.com/fabkho/the-i18n-kit/commit/ec2fb045fa3fa93806f8a80fbbd55347e2606190))
+* **cli:** scope the config cache clear to one project directory ([ec2fb04](https://github.com/fabkho/the-i18n-kit/commit/ec2fb045fa3fa93806f8a80fbbd55347e2606190))
+* **scanner:** decline a Vue SFC block at a time, and read the keys a call chooses ([5f4062a](https://github.com/fabkho/the-i18n-kit/commit/5f4062af52e0eb1b02f154fa686bcb135a3bef05))
+* **scanner:** glob .cjs and .cts, which the syntax frontend already reads ([5f4062a](https://github.com/fabkho/the-i18n-kit/commit/5f4062af52e0eb1b02f154fa686bcb135a3bef05))
+
+## [8.2.1](https://github.com/fabkho/the-i18n-kit/compare/the-i18n-kit-cli-8.2.0...the-i18n-kit-cli-8.2.1) (2026-09-10)
+
+
+### Bug Fixes
+
+* **ci:** commit the translation memory with the translations it describes ([#506](https://github.com/fabkho/the-i18n-kit/issues/506)) ([35fccf9](https://github.com/fabkho/the-i18n-kit/commit/35fccf99261a5e2d8ff891da8d0b72d03737f624))
+
+## [8.2.0](https://github.com/fabkho/the-i18n-kit/compare/the-i18n-kit-cli-8.1.0...the-i18n-kit-cli-8.2.0) (2026-09-09)
+
+
+### Features
+
+* **cli,mcp:** capped reads, prefix reads, discover without prose, guidance on every operation ([ff8084f](https://github.com/fabkho/the-i18n-kit/commit/ff8084f003eb87cb8ed27372246d7b9c135dc1ff))
+* **cli:** translate splits a cut-off batch and plans batches by output weight ([ff8084f](https://github.com/fabkho/the-i18n-kit/commit/ff8084f003eb87cb8ed27372246d7b9c135dc1ff))
+* **cli:** translation memory on by default, one hash per source version, stale counts in status ([ff8084f](https://github.com/fabkho/the-i18n-kit/commit/ff8084f003eb87cb8ed27372246d7b9c135dc1ff))
+* **mcp-compat:** publish the-i18n-mcp as an alias that starts @the-i18n-kit/mcp ([ff8084f](https://github.com/fabkho/the-i18n-kit/commit/ff8084f003eb87cb8ed27372246d7b9c135dc1ff))
+* **mcp:** every tool declares its behaviour hints ([ff8084f](https://github.com/fabkho/the-i18n-kit/commit/ff8084f003eb87cb8ed27372246d7b9c135dc1ff))
+* review hardening — deletion safety, CI translate, agent surface ([#495](https://github.com/fabkho/the-i18n-kit/issues/495)) ([ff8084f](https://github.com/fabkho/the-i18n-kit/commit/ff8084f003eb87cb8ed27372246d7b9c135dc1ff))
+
+
+### Bug Fixes
+
+* **cli,mcp:** put the types condition first in exports; declare engines for the CLI ([ff8084f](https://github.com/fabkho/the-i18n-kit/commit/ff8084f003eb87cb8ed27372246d7b9c135dc1ff))
+* **cli:** ask Gemini for the least thinking it accepts ([ff8084f](https://github.com/fabkho/the-i18n-kit/commit/ff8084f003eb87cb8ed27372246d7b9c135dc1ff))
+* **cli:** localeNotes resolve by code, language tag or file name; context reaches the prompt ([ff8084f](https://github.com/fabkho/the-i18n-kit/commit/ff8084f003eb87cb8ed27372246d7b9c135dc1ff))
+* **cli:** orphan scan protects the targets of @:linked messages ([ff8084f](https://github.com/fabkho/the-i18n-kit/commit/ff8084f003eb87cb8ed27372246d7b9c135dc1ff))
+* **cli:** output schemas cover the paged, stale, linked and guided results ([ff8084f](https://github.com/fabkho/the-i18n-kit/commit/ff8084f003eb87cb8ed27372246d7b9c135dc1ff))
+* **cli:** template scan ignores HTML comments and script/style bodies ([ff8084f](https://github.com/fabkho/the-i18n-kit/commit/ff8084f003eb87cb8ed27372246d7b9c135dc1ff))
+* **cli:** translate keeps the translations a truncated response carried ([ff8084f](https://github.com/fabkho/the-i18n-kit/commit/ff8084f003eb87cb8ed27372246d7b9c135dc1ff))
+
 ## [8.1.0](https://github.com/fabkho/the-i18n-kit/compare/the-i18n-kit-cli-8.0.1...the-i18n-kit-cli-8.1.0) (2026-09-07)
 
 

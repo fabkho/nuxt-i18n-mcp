@@ -10,7 +10,7 @@
  * comparison would report mismatches for perfectly good translations.
  */
 
-import type { LocaleFileFormat } from '../../adapters/types.js'
+import type { LocaleFileFormat } from '../../io/formats.js'
 
 import type { PlaceholderValidationIssue, PlaceholderValidationResult } from '../types.js'
 

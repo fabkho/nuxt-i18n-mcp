@@ -323,6 +323,30 @@ describe('checkUndefinedKeys — scope-aware', () => {
     )
   })
 
+  it('a key the component defines in its own <i18n> block is not undefined', async () => {
+    const result = await checkTempProject('i18n-check-local-messages-', {
+      'i18n/locales/de-DE.json': '{}',
+      'app-admin/i18n/locales/de-DE.json': '{}',
+      'app-shop/i18n/locales/de-DE.json': '{}',
+      'components/Local.vue': [
+        '<i18n lang="json">',
+        '{ "de": { "local": { "title": "Details" } } }',
+        '</i18n>',
+        '<template>',
+        `  <p>{{ $t('local.title') }}</p>`,
+        `  <p>{{ $t('local.missing') }}</p>`,
+        '</template>',
+      ].join('\n'),
+      // The block is that component's, so the same key elsewhere is undefined.
+      'components/Other.vue': `{{ $t('local.title') }}`,
+    })
+
+    expect(result.undefinedKeys.map(f => ({ key: f.key, files: f.usages.map(u => u.file) }))).toEqual([
+      { key: 'local.missing', files: [join('components', 'Local.vue')] },
+      { key: 'local.title', files: [join('components', 'Other.vue')] },
+    ])
+  })
+
   it('honors outputFile: writes the full report and returns only the summary', async () => {
     const reportPath = join(projectDir, 'undefined-report.json')
     const result = await runOperation('check', { projectDir, outputFile: reportPath })

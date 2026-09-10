@@ -7,8 +7,8 @@
  * a call. Write a `.describe()` for that reader: what the field means, what
  * unit it is in, and when it is absent.
  *
- * `core/types.ts` stays the source of truth for the shapes; the guard at the
- * bottom of this file fails the build when a schema and its interface stop
+ * The operation modules stay the source of truth for the shapes; the guard at
+ * the bottom of this file fails the build when a schema and its interface stop
  * describing the same thing, the way `config/schema.ts` holds the config
  * schema to `ProjectConfig`.
  *
@@ -23,25 +23,32 @@ import { z } from 'zod'
 import { projectConfigSchema } from '../config/schema.js'
 import type { CheckUndefinedKeysResult } from '../core/ops-check.js'
 import type { FindDuplicateKeysResult } from '../core/ops-duplicates.js'
-import type { DescribeProjectOutcome, getTranslations, ListNamespacesResult, MissingTranslationsPage, NamespaceNode, SearchTranslationsPage } from '../core/ops-read.js'
+import type { InitProjectConfigResult } from '../core/ops-init.js'
+import type { CodeUsageResult, FindOrphanKeysResult, RemoveOrphanKeysResult } from '../core/ops-orphans.js'
 import type {
-  CodeUsageResult,
+  DescribeProjectOutcome,
   DescribeProjectResult,
-  FindOrphanKeysResult,
-  InitProjectConfigResult,
+  getTranslations,
+  ListNamespacesResult,
+  MissingTranslationsPage,
   MissingTranslationsResult,
+  NamespaceNode,
+  SearchTranslationsPage,
+  SearchTranslationsResult,
+} from '../core/ops-read.js'
+import type { TranslationStatusResult } from '../core/ops-status.js'
+import type {
   MoveTranslationKeyResult,
-  RemoveOrphanKeysResult,
   RemoveTranslationsResult,
   RenameTranslationKeyResult,
   ScaffoldLocaleResult,
-  SearchTranslationsResult,
+  WriteTranslationsResult,
+} from '../core/ops-write.js'
+import type {
   TranslateAllLayersResult,
   TranslateKeyResult,
   TranslateMissingResult,
-  TranslationStatusResult,
-  WriteTranslationsResult,
-} from '../core/types.js'
+} from '../core/translate/run.js'
 
 // ─── Shared leaves ───────────────────────────────────────────────
 // One concept, one schema. A locale ref, a placeholder check and a count of
@@ -951,8 +958,8 @@ export const scaffoldLocaleResult = z.object({
 // A schema that has stopped describing its operation's result is worse than no
 // schema: the MCP server validates `structuredContent` against it, so a field
 // the schema forgot fails the call, and a field it invented is documented to a
-// model that will never see it. `core/types.ts` is the source of truth, so
-// every schema is checked against its interface here — in both directions,
+// model that will never see it. The interface beside each operation is the
+// source of truth, so every schema is checked against it here — in both directions,
 // which is what catches an invented field as well as a forgotten one.
 
 /** True only when the two types are assignable to each other. */

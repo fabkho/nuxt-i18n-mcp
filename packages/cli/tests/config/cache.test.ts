@@ -1,12 +1,19 @@
 import { describe, it, expect, afterAll } from 'vitest'
+import { resolve } from 'node:path'
 import { detectI18nConfig } from '../../src/config/detector.js'
-import { clearConfigCache } from '../../src/config/cache.js'
+import { clearConfigCache, clearConfigCacheFor, getCachedConfig } from '../../src/config/cache.js'
 import { tmpProject } from './tmp-project.js'
 
 const project = tmpProject('config-cache')
 
-async function writeConfig(config: Record<string, unknown>) {
-  await project.write('.i18n-mcp.json', JSON.stringify(config))
+async function writeConfig(config: Record<string, unknown>, into?: string) {
+  await project.write('.i18n-mcp.json', JSON.stringify(config), into)
+}
+
+async function writeGenericProject(into: string, defaultLocale: string) {
+  await project.write('locales/en.json', '{}', into)
+  await project.write('locales/de.json', '{}', into)
+  await writeConfig({ localeDirs: ['locales'], defaultLocale }, into)
 }
 
 describe('clearConfigCache', () => {
@@ -43,5 +50,36 @@ describe('clearConfigCache', () => {
     await writeConfig({ localeDirs: ['locales'], defaultLocale: 'xx' })
 
     expect(await detectI18nConfig(project.dir)).toBe(first)
+  })
+})
+
+describe('clearConfigCacheFor', () => {
+  afterAll(() => {
+    clearConfigCache()
+  })
+
+  it('forgets one project and leaves the others cached', async () => {
+    const other = resolve(project.dir, '../other')
+    await writeGenericProject(project.dir, 'en')
+    await writeGenericProject(other, 'de')
+
+    const first = await detectI18nConfig(project.dir)
+    const second = await detectI18nConfig(other)
+
+    clearConfigCacheFor(project.dir)
+
+    expect(await detectI18nConfig(project.dir)).not.toBe(first)
+    expect(await detectI18nConfig(other)).toBe(second)
+  })
+
+  it('leaves getCachedConfig pointing at something still cached', async () => {
+    await writeGenericProject(project.dir, 'en')
+
+    const config = await detectI18nConfig(project.dir)
+    expect(getCachedConfig()).toBe(config)
+
+    clearConfigCacheFor(project.dir)
+
+    expect(getCachedConfig()).toBeNull()
   })
 })

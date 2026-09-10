@@ -20,21 +20,158 @@ import { ToolError } from '../utils/errors.js'
 import { scaffoldLocale } from '../tools/scaffold-locale.js'
 
 import type {
+  MutationPreview,
   MutationResult,
-  WriteTranslationsResult,
-  ScaffoldLocaleResult,
-  ScaffoldLocaleFileInfo,
   PlaceholderValidationResult,
   UnresolvedLocaleRef,
-  RemoveTranslationsResult,
-  RenameTranslationKeyResult,
-  MoveTranslationKeyOutcome,
-  MoveTranslationKeyPlanEntry,
 } from './types.js'
 import { findWritableLayerOrThrow, findLocaleImpl, findLocaleSuggestion, resolveLocaleRef } from './shared.js'
 import type { LocaleRefAmbiguity } from './shared.js'
 import { validatePlaceholders, mergePlaceholderValidation } from './ops-translate.js'
 import { recordWrittenTranslations } from './translate/memory.js'
+
+// ─── write translations ──────────────────────────────────────
+
+export interface WriteTranslationsResult {
+  /** Present when dryRun=true */
+  dryRun?: boolean
+  wouldWrite?: MutationPreview[]
+  /** Present when dryRun=false */
+  written?: string[]
+  skipped: string[]
+  filesWritten?: number
+  warnings?: string[]
+  placeholderValidation?: PlaceholderValidationResult
+  /** Present only when a locale ref resolved to nothing — see UnresolvedLocaleRef. */
+  unresolvedLocales?: UnresolvedLocaleRef[]
+  /** Present only when a locale ref matched several locales. */
+  ambiguousLocales?: LocaleRefAmbiguity[]
+  summary?: {
+    keysWritten: number
+    keysSkipped: number
+    message: string
+  }
+  skippedKeys?: string[]
+  /** The step after this one, as the surface phrases it. Present only when there is no summary to carry it. */
+  message?: string
+}
+
+// ─── remove_translations ─────────────────────────────────────
+
+export interface RemoveTranslationsPreview {
+  locale: string
+  key: string
+  oldValue: unknown
+}
+
+export interface RemoveTranslationsResult {
+  /** Present when dryRun=true */
+  dryRun?: boolean
+  wouldRemove?: RemoveTranslationsPreview[]
+  /** Present when dryRun=false */
+  removed?: string[]
+  removedPerLocale?: string[]
+  notFound?: string[]
+  filesWritten?: number
+  summary?: {
+    keysFound: number
+    message: string
+  }
+  /** The step after this one, as the surface phrases it. Present only when there is no summary to carry it. */
+  message?: string
+}
+
+// ─── rename_translation_key ──────────────────────────────────
+
+export interface RenameTranslationKeyPreview {
+  locale: string
+  oldKey: string
+  newKey: string
+  value: unknown
+}
+
+export interface RenameTranslationKeyResult {
+  /** Present when dryRun=true */
+  dryRun?: boolean
+  wouldRename?: RenameTranslationKeyPreview[]
+  /** Present when dryRun=false */
+  renamed?: string[]
+  filesWritten?: number
+  oldKey?: string
+  newKey?: string
+  notFoundInLocales?: string[]
+  conflictsInLocales?: string[]
+  skippedDueToConflict?: string[]
+  summary?: {
+    localesAffected: number
+    message: string
+    warning?: string
+  }
+  /** The step after this one, as the surface phrases it. Present only when there is no summary to carry it. */
+  message?: string
+}
+
+// ─── move_translation_key ────────────────────────────────────
+
+/** What a move does to one locale's copy of the key. */
+export interface MoveTranslationKeyPlanEntry {
+  locale: string
+  value: unknown
+  /**
+   * `move` writes the target and drops the source. `deduplicate` finds the
+   * target already holding the same value, so only the source is dropped.
+   */
+  action: 'move' | 'deduplicate'
+}
+
+/**
+ * What a move returns: a rename result when the key stayed in its layer, a move
+ * result when it changed layers. A union rather than one merged shape, so
+ * neither half carries fields that can never be set for the other.
+ */
+export type MoveTranslationKeyOutcome = MoveTranslationKeyResult | RenameTranslationKeyResult
+
+export interface MoveTranslationKeyResult {
+  /** Present when dryRun=true */
+  dryRun?: boolean
+  wouldMove?: MoveTranslationKeyPlanEntry[]
+  /** Present when dryRun=false */
+  movedLocales?: string[]
+  /** Locales where the target already held this value, so only the source was dropped. */
+  deduplicatedLocales?: string[]
+  filesWritten?: number
+  fromLayer?: string
+  toLayer?: string
+  key?: string
+  newKey?: string
+  /** Locales whose source layer does not define the key at all. */
+  notFoundInLocales?: string[]
+  /** Locales where the target holds a different value. Nothing is written when this is non-empty. */
+  conflictsInLocales?: string[]
+  summary?: {
+    localesAffected: number
+    message: string
+    warning?: string
+  }
+  /** The step after this one, as the surface phrases it. Present only when there is no summary to carry it. */
+  message?: string
+}
+
+// ─── scaffold_locale ────────────────────────────────────────
+
+export interface ScaffoldLocaleFileInfo {
+  locale: string
+  layer: string
+  file: string
+  keys: number
+  namespace?: string
+}
+
+export interface ScaffoldLocaleResult {
+  created: ScaffoldLocaleFileInfo[]
+  skipped: ScaffoldLocaleFileInfo[]
+  dryRun: boolean
+}
 
 /**
  * Shared logic for write_translations (supports add, update, and upsert modes).

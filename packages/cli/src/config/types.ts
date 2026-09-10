@@ -1,4 +1,4 @@
-import type { LocaleFileFormat } from '../adapters/types'
+import type { LocaleFileFormat } from '../io/formats'
 
 /**
  * A single locale definition as detected from the framework config.

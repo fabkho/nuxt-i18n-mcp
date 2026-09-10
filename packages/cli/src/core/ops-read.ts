@@ -6,25 +6,18 @@
 
 import { readdir } from 'node:fs/promises'
 
-import { detectI18nConfig, clearConfigCache } from '../config/detector.js'
+import { detectI18nConfig, clearConfigCacheFor } from '../config/detector.js'
 import { serializeLayerGraph } from '../config/layer-graph.js'
+import type { SerializedLayerGraph } from '../config/layer-graph.js'
 import type { I18nConfig, ProjectConfig } from '../config/types.js'
 import { readLocaleData, readLocaleDataIfPresent, resolveLocaleEntries } from '../io/locale-data.js'
 import { getFormat } from '../io/formats.js'
 import { getNestedValue, getLeafKeys } from '../io/key-operations.js'
-import { ToolError } from '../utils/errors.js'
+import { ToolError, toErrorMessage } from '../utils/errors.js'
+import { log } from '../utils/logger.js'
 
-import type {
-  DescribeProjectResult,
-  LocaleDirInfo,
-  MissingTranslationsResult,
-  EmptyTranslationsResult,
-  SearchKeyMatch,
-  SearchMatch,
-  SearchMatchMode,
-  SearchTranslationsResult,
-} from './types.js'
-import { findLayerOrThrow, findReferenceLocaleOrThrow, findLocaleImpl, localeRefInfo, resolveLayersToScan } from './shared.js'
+import type { LocaleRefInfo } from './types.js'
+import { ALL_LAYERS, findReferenceLocaleOrThrow, findLocaleImpl, localeRefInfo, resolveLayersToScan } from './shared.js'
 import { resolveProtectedLocales } from './ops-translate.js'
 
 // ─── paging ──────────────────────────────────────────────────────
@@ -60,6 +53,30 @@ function paginate<T>(
 }
 
 // ─── discover ────────────────────────────────────────────────────
+
+/**
+ * The whole resolved project in one answer: the config, the locale dirs behind
+ * it, the topology those dirs form, and which locales are maintained by hand.
+ *
+ * A superset of `I18nConfig` rather than a wrapper around it, because every
+ * caller of the old three-call sequence merged the parts anyway and a nested
+ * `config` key would break each of them for nothing.
+ */
+export interface DescribeProjectResult extends I18nConfig {
+  /**
+   * Canonical codes of the locales the translate operations leave alone. The
+   * raw refs stay visible under `projectConfig.protectedLocales`.
+   */
+  protectedLocales: string[]
+  /** One entry per locale directory, with file counts and key namespaces. */
+  layers: LocaleDirInfo[]
+  /**
+   * Which layers are shared, which apps consume which layer, and what each
+   * alias points at — the topology behind the flat `layers` list, and what
+   * answers where a new key belongs.
+   */
+  layerGraph: SerializedLayerGraph
+}
 
 /**
  * The project-config fields that carry translation prose rather than structure.
@@ -125,13 +142,26 @@ function withoutTranslationGuidance(projectConfig: ProjectConfig): TrimmedProjec
 }
 
 /**
- * Detect the i18n configuration from the project, always bypassing the
- * config cache (clears it first).
+ * Detect the i18n configuration from the project, always bypassing the config
+ * cache: this project's entry is forgotten first.
+ *
+ * Only this project's. A process that has resolved several — an MCP server
+ * across a session — keeps the rest, which re-detecting one project says
+ * nothing about.
  */
 export async function detectConfig(projectDir?: string): Promise<I18nConfig> {
   const dir = projectDir ?? process.cwd()
-  clearConfigCache()
+  clearConfigCacheFor(dir)
   return detectI18nConfig(dir)
+}
+
+export interface LocaleDirInfo {
+  layer: string
+  path: string
+  aliasOf?: string
+  fileCount: number
+  topLevelKeys?: string[]
+  namespaces?: string[]
 }
 
 /**
@@ -159,8 +189,11 @@ export async function listLocaleDirs(projectDir?: string): Promise<LocaleDirInfo
     // A namespaced layout counts directories and reports the namespaces in
     // one; a flat one counts locale files and reports the keys in one.
     if (format.defaultLayout === 'namespaced') {
+      // An inventory keeps listing the layers it could read. Every unreadable
+      // one is named on stderr instead, so a zero count is never a silence.
       let subDirs: string[] = []
-      try { subDirs = await readdir(localeDir.path) } catch {}
+      try { subDirs = await readdir(localeDir.path) }
+      catch (err) { log.warn(`Cannot list locale directory ${localeDir.path}: ${toErrorMessage(err)}`) }
 
       const sampleLocale = config.locales[0]
       let namespaces: string[] = []
@@ -168,7 +201,8 @@ export async function listLocaleDirs(projectDir?: string): Promise<LocaleDirInfo
         try {
           const entries = await resolveLocaleEntries(config, localeDir.layer, sampleLocale)
           namespaces = entries.map(e => e.namespace).filter((n): n is string => n !== null)
-        } catch {}
+        }
+        catch (err) { log.warn(`Cannot list the namespaces of layer '${localeDir.layer}' (${localeDir.path}): ${toErrorMessage(err)}`) }
       }
 
       results.push({
@@ -187,7 +221,8 @@ export async function listLocaleDirs(projectDir?: string): Promise<LocaleDirInfo
         try {
           const data = await readLocaleData(config, localeDir.layer, sampleLocale)
           topLevelKeys = Object.keys(data)
-        } catch {}
+        }
+        catch (err) { log.warn(`Cannot read locale '${sampleLocale.code}' of layer '${localeDir.layer}': ${toErrorMessage(err)}`) }
       }
 
       results.push({
@@ -251,7 +286,10 @@ export async function getTranslations(opts: {
   offset?: number
   projectDir?: string
 }): Promise<GetTranslationsOutcome> {
-  const { layer, locale, keyPrefix } = opts
+  const { locale, keyPrefix } = opts
+  // '*' and an omitted layer are the same request, and the answer shape below
+  // turns on "was one layer named" rather than on the spelling.
+  const layer = opts.layer === ALL_LAYERS ? undefined : opts.layer
   const dir = opts.projectDir ?? process.cwd()
   const config = await detectI18nConfig(dir)
 
@@ -405,6 +443,18 @@ function summarizeByKey(
 
 // ─── get_missing_translations ──────────────────────────────────────
 
+export interface MissingTranslationsResult {
+  missing: Record<string, Record<string, string[]>>
+  summary: {
+    referenceLocale: string | LocaleRefInfo
+    targetLocales: Array<string | LocaleRefInfo>
+    layersScanned: string[]
+    totalMissingKeys: number
+    /** The step after this one, as the surface the call ran on phrases it. Present when there is one. */
+    message?: string
+  }
+}
+
 /**
  * The missing keys, capped. The unit is one key of one (layer, locale) pair —
  * the nested map flattened — while `summary.totalMissingKeys` stays the count
@@ -461,7 +511,12 @@ export async function getMissingTranslations(opts: {
 
       try {
         targetData = await readLocaleData(config, localeDir.layer, target)
-      } catch {}
+      }
+      catch (err) {
+        // Every reference key then counts as missing for this locale, which
+        // over-reports rather than hiding the file — as long as it is named.
+        log.warn(`Cannot read locale '${target.code}' of layer '${localeDir.layer}': ${toErrorMessage(err)}`)
+      }
 
       const missing = refKeys.filter(k => {
         const v = getNestedValue(targetData, k)
@@ -499,6 +554,17 @@ export async function getMissingTranslations(opts: {
       totalMissingKeys: totalMissing,
     },
     ...paging,
+  }
+}
+
+// ─── empty translations ──────────────────────────────────────
+
+export interface EmptyTranslationsResult {
+  emptyKeys: Record<string, Record<string, string[]>>
+  summary: {
+    totalEmpty: number
+    localesChecked: string[]
+    layersChecked: string[]
   }
 }
 
@@ -546,16 +612,7 @@ export async function collectEmptyTranslations(
       })()
     : config.locales
 
-  const layersToScan = layer
-    ? config.localeDirs.filter(d => d.layer === layer)
-    : config.localeDirs.filter(d => !d.aliasOf)
-
-  if (layersToScan.length === 0) {
-    if (layer) {
-      findLayerOrThrow(config, layer)
-    }
-    throw new ToolError('No locale directories found.', 'LAYER_NOT_FOUND')
-  }
+  const layersToScan = resolveLayersToScan(config, layer)
 
   const emptyKeys: Record<string, Record<string, string[]>> = {}
   let totalEmpty = 0
@@ -583,6 +640,62 @@ export async function collectEmptyTranslations(
       layersChecked: layersToScan.map(d => d.layer),
     },
   }
+}
+
+// ─── search_translations ─────────────────────────────────────
+
+/**
+ * One key in one locale of one layer — the detail rows, returned when the
+ * caller asks for them.
+ */
+export interface SearchMatch {
+  layer: string
+  locale: string
+  key: string
+  value: unknown
+}
+
+/**
+ * One key, however many layers and locales define it — the row a search
+ * returns by default.
+ *
+ * A key that exists in seven layers and thirty locales used to come back as
+ * dozens of near-identical rows, which an agent pays for and then has to group
+ * itself before it can answer the question it asked: does a translation for
+ * this text already exist, and where. Grouped here instead, because `layers`
+ * is the answer to the second half — one layer means reuse it, several mean
+ * the key is already duplicated.
+ */
+export interface SearchKeyMatch {
+  key: string
+  /** Every searched layer that defines the key, in layer order. */
+  layers: string[]
+  /** What `locale` holds for the key. */
+  value: unknown
+  /**
+   * Which locale `value` was read from: the reference locale where it defines
+   * the key, otherwise the first searched locale that does.
+   */
+  locale: string
+  /** How many of the searched locales define the key. */
+  localeCount: number
+}
+
+/** How `query` is compared against a key path or a value. */
+export type SearchMatchMode = 'contains' | 'exact' | 'fuzzy'
+
+export interface SearchTranslationsResult {
+  /**
+   * One row per key by default; one row per key and locale when the caller
+   * passed `includeLocales`.
+   */
+  matches: SearchKeyMatch[] | SearchMatch[]
+  /**
+   * How many rows matched, whichever shape they are in. Counted before any
+   * limit applies, so it stays the size of the finding rather than the size of
+   * the window returned.
+   */
+  totalMatches: number
 }
 
 /**
@@ -721,16 +834,7 @@ export async function searchTranslations(opts: {
   const matchMode = opts.matchMode ?? 'contains'
   const isMatch = buildMatcher(matchMode, query)
 
-  const layersToSearch = (layer && layer !== '*')
-    ? config.localeDirs.filter(d => d.layer === layer)
-    : config.localeDirs.filter(d => !d.aliasOf)
-
-  if (layersToSearch.length === 0) {
-    if (layer && layer !== '*') {
-      findLayerOrThrow(config, layer)
-    }
-    throw new ToolError('No locale directories found. Run discover to verify the project setup.', 'LAYER_NOT_FOUND')
-  }
+  const layersToSearch = resolveLayersToScan(config, layer)
 
   const localesToSearch = locale
     ? (() => {
@@ -830,12 +934,7 @@ export async function listNamespaces(opts: {
   const dir = opts.projectDir ?? process.cwd()
   const config = await detectI18nConfig(dir)
 
-  if (opts.layer && opts.layer !== '*') {
-    findLayerOrThrow(config, opts.layer)
-  }
-  const layersToScan = (opts.layer && opts.layer !== '*')
-    ? config.localeDirs.filter(d => d.layer === opts.layer)
-    : config.localeDirs.filter(d => !d.aliasOf)
+  const layersToScan = resolveLayersToScan(config, opts.layer)
 
   const localeToUse = opts.locale
     ? findLocaleImpl(config, opts.locale) ?? (() => {
@@ -854,7 +953,8 @@ export async function listNamespaces(opts: {
     try {
       data = await readLocaleData(config, ld.layer, localeToUse)
     }
-    catch {
+    catch (err) {
+      log.warn(`Cannot read locale '${localeToUse.code}' of layer '${ld.layer}' — its namespaces are left out: ${toErrorMessage(err)}`)
       continue
     }
 

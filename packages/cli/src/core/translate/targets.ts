@@ -6,13 +6,13 @@
 import type { I18nConfig, LocaleDefinition } from '../../config/types.js'
 import { readLocaleData } from '../../io/locale-data.js'
 import { log } from '../../utils/logger.js'
-import { ToolError } from '../../utils/errors.js'
+import { ToolError, toErrorMessage } from '../../utils/errors.js'
 
 import type {
   TranslateMode,
   TranslateSkipReason,
   TranslateMissingLocaleResult,
-} from '../types.js'
+} from './run.js'
 import { findLocaleImpl } from '../shared.js'
 
 /**
@@ -93,7 +93,12 @@ export async function collectProtectedLocaleResults(
     let data: Record<string, unknown> = {}
     try {
       data = await readLocaleData(config, layer, locale)
-    } catch {}
+    }
+    catch (err) {
+      // Nothing is written to a protected locale either way; the report of what
+      // it is missing is what degrades, so name the file it degraded on.
+      log.warn(`Cannot read protected locale '${locale.code}' of layer '${layer}': ${toErrorMessage(err)}`)
+    }
     const missingKeys = missingKeysIn(data)
     if (missingKeys.length === 0) continue
     results[locale.code] = {

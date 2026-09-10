@@ -44,11 +44,11 @@ export class GenericAdapter implements FrameworkAdapter {
 
   // No memo of its own: the adapter is registered once for the life of the
   // process, so anything remembered here would outlive a cache clear and keep
-  // reporting a config the user has already edited. Detection loads it because
-  // it runs before there is anything to hand down; loading it is two file
-  // reads.
-  async detect(projectDir: string): Promise<number> {
-    const config = await loadProjectConfig(projectDir)
+  // reporting a config the user has already edited. A caller that has already
+  // read the declaration hands it down instead; only one that has not makes
+  // this read the two files itself.
+  async detect(projectDir: string, projectConfig?: ProjectConfig | null): Promise<number> {
+    const config = projectConfig === undefined ? await loadProjectConfig(projectDir) : projectConfig
     if (config?.localeDirs && config.localeDirs.length > 0 && config.defaultLocale) {
       return DECLARED
     }

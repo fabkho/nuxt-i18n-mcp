@@ -6,7 +6,7 @@ import { formatForFile, getFormat } from './formats'
 import type { LocaleFormat } from './formats'
 import type { I18nConfig, LocaleDefinition } from '../config/types'
 import { log } from '../utils/logger'
-import { FileIOError } from '../utils/errors'
+import { FileIOError, toErrorMessage } from '../utils/errors'
 
 /**
  * A single locale file entry with its path and optional namespace.
@@ -75,33 +75,33 @@ export async function resolveLocaleEntries(
 }
 
 /**
- * Read all locale data for a locale in a layer, merged into a single object.
+ * Like readLocaleData, but reports a layer holding nothing for this locale as
+ * absent — for scan loops that skip locales without data there.
  *
- * - Nuxt: Returns the JSON file contents as-is
- * - Laravel / Next.js / React: Reads each namespace file and mounts under its namespace key
- *   e.g., `{ auth: { failed: "..." }, common: { welcome: "Hello" } }`
- *
- * Missing files are treated as empty objects (no error thrown).
- */
-/**
- * Like readLocaleData, but treats unreadable and empty layers as absent —
- * for scan loops that skip locales without data.
+ * Absent only. A file that exists but cannot be read or parsed throws, because
+ * "no keys" and "could not look" are the same answer to a caller that is about
+ * to decide which keys nothing protects.
  */
 export async function readLocaleDataIfPresent(
   config: I18nConfig,
   layer: string,
   locale: LocaleDefinition,
 ): Promise<Record<string, unknown> | null> {
-  let data: Record<string, unknown>
-  try {
-    data = await readLocaleData(config, layer, locale)
-  }
-  catch {
-    return null
-  }
+  const data = await readLocaleData(config, layer, locale)
   return Object.keys(data).length === 0 ? null : data
 }
 
+/**
+ * Read all locale data for a locale in a layer, merged into a single object.
+ *
+ * - Nuxt: Returns the JSON file contents as-is
+ * - Laravel / Next.js / React: Reads each namespace file and mounts under its namespace key
+ *   e.g., `{ auth: { failed: "..." }, common: { welcome: "Hello" } }`
+ *
+ * A file that is not there is an empty object — a locale legitimately has no
+ * file in every layer. One that is there and unreadable throws FileIOError
+ * naming it.
+ */
 export async function readLocaleData(
   config: I18nConfig,
   layer: string,
@@ -332,12 +332,21 @@ async function hasNamespacedLayout(config: I18nConfig, layer: string, format: Lo
           if (subFiles.some(f => matchExtension(f, format.extensions))) return true
         }
       }
-      catch { /* skip unreadable dirs */ }
+      catch (err) {
+        if (!isAbsent(err)) log.warn(`Cannot inspect ${subPath} for a namespaced layout: ${toErrorMessage(err)}`)
+      }
     }
   }
-  catch { /* locale dir not readable */ }
+  catch (err) {
+    if (!isAbsent(err)) log.warn(`Cannot inspect ${localeDir} for a namespaced layout: ${toErrorMessage(err)}`)
+  }
 
   return false
+}
+
+/** ENOENT: the path is simply not there, which is not a failure to read it. */
+function isAbsent(err: unknown): boolean {
+  return (err as NodeJS.ErrnoException | null)?.code === 'ENOENT'
 }
 
 /** The extension a file name ends with, out of the ones given. */
@@ -355,7 +364,14 @@ async function resolveNamespacedEntries(localeDir: string, localeCode: string, e
     files = await readdir(localePath)
   }
   catch (err) {
-    log.debug(`Failed to read locale directory ${localePath}: ${err instanceof Error ? err.message : String(err)}`)
+    // Anything but "not there" would come back as a locale with no keys, which
+    // is what a deletion reads as "nothing to protect".
+    if (!isAbsent(err)) {
+      throw new FileIOError(
+        `Failed to read locale directory: ${localePath}: ${toErrorMessage(err)}`,
+        localePath,
+      )
+    }
     return []
   }
 

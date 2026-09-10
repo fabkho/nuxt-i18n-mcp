@@ -8,13 +8,94 @@ import { detectI18nConfig } from '../config/detector.js'
 import { buildLayerGraph } from '../config/layer-graph.js'
 import { readLocaleData, readLocaleDataIfPresent } from '../io/locale-data.js'
 import { getNestedValue, getLeafKeys } from '../io/key-operations.js'
+import { toErrorMessage } from '../utils/errors.js'
+import { log } from '../utils/logger.js'
 import { findReferenceLocaleOrThrow, localeRefInfo, resolveLayersToScan } from './shared.js'
 import { resolveProtectedLocales } from './ops-translate.js'
 import { collectEmptyTranslations } from './ops-read.js'
 import { memoryFilePath, openTranslationMemory } from './translate/memory.js'
 import type { TranslationMemorySession } from './translate/memory.js'
 import type { LocaleDefinition, LocaleDir, I18nConfig } from '../config/types.js'
-import type { TranslationStatusResult, LocaleStatus, LayerStatus } from './types.js'
+import type { LocaleRefInfo } from './types.js'
+
+export interface LocaleStatus extends LocaleRefInfo {
+  total: number
+  translated: number
+  missing: number
+  /** Present but empty-string — scaffolded and never filled. */
+  empty: number
+  completion: number
+  /**
+   * Translated keys whose source text has changed since. Absent, rather than
+   * zero, without a translation memory to compare against — nothing is known
+   * about staleness there, which is not the same as nothing being stale.
+   */
+  stale?: number
+  /** Listed in protectedLocales: maintained by hand. */
+  protected?: true
+  /** Protected locales are reported but kept out of the overall figure. */
+  excludedFromOverall?: true
+}
+
+export interface LayerStatus {
+  layer: string
+  total: number
+  translated: number
+  missing: number
+  empty: number
+  completion: number
+  /** As on LocaleStatus: absent without a translation memory. */
+  stale?: number
+  /**
+   * Apps whose declared layers include this one. Empty means either no app
+   * information exists (hand-built configs) or nothing consumes the layer.
+   */
+  consumedBy: string[]
+}
+
+export interface TranslationStatusSummary {
+  referenceLocale: LocaleRefInfo
+  layersScanned: string[]
+  /**
+   * Scanned layers no app consumes — keys nothing can render. Stays empty
+   * unless the project declares more than one app, since a single-app project
+   * has no consumption edges worth reporting on.
+   */
+  unconsumedLayers: string[]
+  localesChecked: number
+  protectedLocales: string[]
+  totalKeys: number
+  translatedKeys: number
+  missingKeys: number
+  emptyKeys: number
+  /**
+   * Translated keys across the counted locales whose source text has changed
+   * since. Absent without a translation memory, matching translate's summary.
+   */
+  staleCount?: number
+  /** Overall completion, protected locales excluded. Read by --fail-under. */
+  completionPercent: number
+}
+
+export interface TranslationStatusResult {
+  locales: LocaleStatus[]
+  layers: LayerStatus[]
+  /**
+   * Locale → layer → the keys `summary.emptyKeys` counts: empty in that target
+   * locale while the reference locale has a value. Present only when the caller
+   * asked to list them. Added to the result rather than replacing it, so asking
+   * which keys are empty still answers the coverage question that prompted it.
+   */
+  empty?: Record<string, Record<string, string[]>>
+  /**
+   * Layer → keys whose value is empty in the reference locale itself. Nothing
+   * to translate from, so excluded from every count; listed so a deliberate
+   * blank and a forgotten one can be told apart. Present only with `empty`,
+   * and only when there are any.
+   */
+  emptyInReference?: Record<string, string[]>
+  summary: TranslationStatusSummary
+}
 
 /**
  * Keys worth translating: present in the reference locale with a non-empty
@@ -225,6 +306,12 @@ async function listEmptyKeys(
   }
 }
 
+/**
+ * One target locale's keys in one layer. A locale with no file in this layer
+ * is entirely missing rather than an error, and an unreadable file counts the
+ * same way — coverage for the other locales is still worth reporting, so long
+ * as the file that could not be read is named.
+ */
 async function readTargetData(
   config: I18nConfig,
   layer: string,
@@ -233,8 +320,8 @@ async function readTargetData(
   try {
     return await readLocaleData(config, layer, target)
   }
-  catch {
-    // A locale with no file in this layer is entirely missing, not an error.
+  catch (err) {
+    log.warn(`Cannot read locale '${target.code}' of layer '${layer}' — counted as untranslated: ${toErrorMessage(err)}`)
     return {}
   }
 }

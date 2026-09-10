@@ -13,11 +13,8 @@ import { resolve } from 'node:path'
 import type { I18nConfig } from '../../src/config/types.js'
 import type { UndefinedKeyFinding } from '../../src/core/ops-check.js'
 import type { DuplicateKeyCollision, FindDuplicateKeysResult } from '../../src/core/ops-duplicates.js'
-import type {
-  LocaleStatus,
-  MissingTranslationsResult,
-  TranslationStatusResult,
-} from '../../src/core/types.js'
+import type { MissingTranslationsResult } from '../../src/core/ops-read.js'
+import type { LocaleStatus, TranslationStatusResult } from '../../src/core/ops-status.js'
 import {
   duplicateKeysToCodeQuality,
   missingTranslationsToCodeQuality,
