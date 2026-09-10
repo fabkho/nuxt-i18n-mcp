@@ -7,6 +7,7 @@ import { createPhpFrontend } from './frontends/php/index.js'
 import { collectBarePhpCandidates } from './frontends/php/patterns.js'
 import { createBladeFrontend } from './frontends/php/blade.js'
 import type { LanguageFrontend } from './frontends/types.js'
+import { collectLocalMessageKeys } from './local-messages.js'
 import { interpret } from './rules.js'
 import type { RuleContext } from './rules.js'
 import { ambiguousCalleeNeedsDot } from './rules.js'
@@ -53,6 +54,12 @@ export interface ScanResult {
    * Format: `` `prefix.${_}.suffix` `` — ready to feed into `buildDynamicKeyRegexes`.
    */
   bareDynamicCandidates: Set<string>
+  /**
+   * Absolute file path → the keys that file defines for itself in an SFC
+   * `<i18n>` block. Those keys resolve in that file and nowhere else, so a
+   * consumer has to match them against the usages of that same file.
+   */
+  localDefinitions: Map<string, Set<string>>
 }
 
 // ─── Const-table resolution (#284) ──────────────────────────────
@@ -390,6 +397,8 @@ interface ScannedFile {
   bareStrings: Set<string>
   bareDynamics: Set<string>
   declined: boolean
+  /** Keys this file defines for itself in an SFC `<i18n>` block. */
+  localKeys: Set<string>
 }
 
 /**
@@ -455,13 +464,14 @@ export async function scanSourceFiles(rootDir: string, excludeDirs?: string[], p
     collectBareCandidates(content, constTable, bareStrings, bareDynamics, pat.bareShapes)
 
     hooks?.onFile?.(++filesDone, fileTotal, relPath)
-    return { relPath, usages, dynamicKeys, bareStrings, bareDynamics, declined }
+    return { relPath, usages, dynamicKeys, bareStrings, bareDynamics, declined, localKeys: collectLocalMessageKeys(content, filePath) }
   })
 
   const allUsages: KeyUsage[] = []
   const allDynamicKeys: DynamicKeyUsage[] = []
   const bareStringCandidates = new Set<string>()
   const bareDynamicCandidates = new Set<string>()
+  const localDefinitions = new Map<string, Set<string>>()
   const declinedFiles: string[] = []
   let filesScanned = 0
 
@@ -476,6 +486,7 @@ export async function scanSourceFiles(rootDir: string, excludeDirs?: string[], p
     allDynamicKeys.push(...file.dynamicKeys)
     for (const candidate of file.bareStrings) bareStringCandidates.add(candidate)
     for (const candidate of file.bareDynamics) bareDynamicCandidates.add(candidate)
+    if (file.localKeys.size > 0) localDefinitions.set(join(rootDir, file.relPath), file.localKeys)
 
     filesScanned++
   }
@@ -483,7 +494,7 @@ export async function scanSourceFiles(rootDir: string, excludeDirs?: string[], p
   const uniqueKeys = new Set(allUsages.map(u => u.key))
   log.debug(`Scanned ${filesScanned} files, found ${uniqueKeys.size} unique keys, ${allDynamicKeys.length} dynamic references, ${bareStringCandidates.size} bare string candidates, ${bareDynamicCandidates.size} bare dynamic candidates`)
 
-  return { usages: allUsages, dynamicKeys: allDynamicKeys, filesScanned, declinedFiles, uniqueKeys, bareStringCandidates, bareDynamicCandidates }
+  return { usages: allUsages, dynamicKeys: allDynamicKeys, filesScanned, declinedFiles, uniqueKeys, bareStringCandidates, bareDynamicCandidates, localDefinitions }
 }
 
 // ─── Utilities ──────────────────────────────────────────────────

@@ -343,7 +343,11 @@ function classifyUnitUsages(scan: ScanResult, ctx: UnitCheckContext): UnitCheckO
     ...[...scan.bareDynamicCandidates].map(expression => ({ expression })),
   ])
 
-  classifyStaticKeys(scan.usages, dynRegexes, ctx, outcome)
+  // A component's own `<i18n>` block is the definition of the keys it uses, so
+  // those usages resolve without any locale file carrying them.
+  const usages = scan.usages.filter(u => !scan.localDefinitions.get(u.file)?.has(u.key))
+
+  classifyStaticKeys(usages, dynRegexes, ctx, outcome)
   classifyDynamicUsages(scan.dynamicKeys, ctx, outcome)
   return outcome
 }

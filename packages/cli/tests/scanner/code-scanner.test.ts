@@ -883,6 +883,58 @@ describe('scanSourceFiles', () => {
     expect(regexes.some(re => re.test('api.orders.status.open'))).toBe(true)
   })
 
+  // The extensions the syntax frontend already reads; without them in the glob
+  // a CommonJS module was never opened at all.
+  it('scans .cjs and .cts files', async () => {
+    await writeFile(join(tmpDir, 'legacy.cjs'), `const label = $t('legacy.cjs.title')`)
+    await writeFile(join(tmpDir, 'legacy.cts'), `const label = $t('legacy.cts.title')`)
+
+    const result = await scanSourceFiles(tmpDir)
+    expect(result.filesScanned).toBe(2)
+    expect([...result.uniqueKeys].sort()).toEqual(['legacy.cjs.title', 'legacy.cts.title'])
+  })
+
+  // vue-i18n resolves an SFC's own `<i18n>` block in that component, so its
+  // keys are defined even though no locale file carries them.
+  describe('messages an SFC defines for itself', () => {
+    it('reports the keys of a JSON block against the file that declares them', async () => {
+      await writeFile(join(tmpDir, 'Local.vue'), [
+        '<i18n lang="json">',
+        '{ "en": { "local": { "title": "Details" } }, "de": { "local": { "title": "Details" } } }',
+        '</i18n>',
+        '<template>', `  <p>{{ $t('local.title') }}</p>`, '</template>',
+      ].join('\n'))
+
+      const result = await scanSourceFiles(tmpDir)
+      const defined = result.localDefinitions.get(join(tmpDir, 'Local.vue'))
+
+      expect([...defined ?? []].sort()).toEqual(['local', 'local.title'])
+      expect(result.uniqueKeys.has('local.title')).toBe(true)
+    })
+
+    it('reads a YAML block', async () => {
+      await writeFile(join(tmpDir, 'Yaml.vue'), [
+        '<i18n lang="yaml">', 'en:', '  local:', '    title: Details', '</i18n>',
+        '<template>', `  <p>{{ $t('local.title') }}</p>`, '</template>',
+      ].join('\n'))
+
+      const result = await scanSourceFiles(tmpDir)
+
+      expect([...result.localDefinitions.get(join(tmpDir, 'Yaml.vue')) ?? []].sort())
+        .toEqual(['local', 'local.title'])
+    })
+
+    it('does not read the block as markup', async () => {
+      await writeFile(join(tmpDir, 'Masked.vue'), [
+        '<i18n>', `{ "en": { "local": { "hint": "Use :title=\\"$t('never.a.usage')\\"" } } }`, '</i18n>',
+        '<template>', `  <p>{{ $t('local.hint') }}</p>`, '</template>',
+      ].join('\n'))
+
+      const result = await scanSourceFiles(tmpDir)
+      expect([...result.uniqueKeys]).toEqual(['local.hint'])
+    })
+  })
+
   // #275 — a stray backtick must not turn the span to the next backtick into a
   // mega-expression; only candidates with i18n-key shape survive.
   describe('bare-template mega-capture rejection (#275)', () => {
