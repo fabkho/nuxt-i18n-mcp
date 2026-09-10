@@ -62,21 +62,59 @@ function withBorderLabel(inner: EditorComponent, label: () => string | undefined
   return wrapper;
 }
 
-export default function i18nKitTheme(pi: ExtensionAPI): void {
-  pi.on("session_start", (_event, ctx: ExtensionContext) => {
-    if (!ctx.hasUI) return;
-    if (process.env.I18N_KIT_BORDER === "off") return;
+/** Marks a factory as ours, so a re-check does not wrap a wrapper. */
+const WRAPPED = Symbol.for("the-i18n-kit.border-wrapped");
 
+/** How long to keep looking for an editor to wrap, and how often. */
+const WRAP_RETRY_MS = 50;
+const WRAP_TIMEOUT_MS = 3_000;
+
+export default function i18nKitTheme(pi: ExtensionAPI): void {
+  /**
+   * Wrap the installed editor, if there is one and it is not already wrapped.
+   *
+   * Returns whether a wrapped editor is in place, so a caller can decide
+   * whether to keep looking.
+   */
+  const ensureWrapped = (ctx: ExtensionContext): boolean => {
     const current: EditorFactory | undefined = ctx.ui.getEditorComponent?.();
     // Nothing to wrap: pi's own editor is not exposed as a factory, and taking
     // it over would mean reimplementing someone else's frame to add one label.
-    if (!current) return;
+    if (!current) return false;
+    if ((current as { [WRAPPED]?: boolean })[WRAPPED]) return true;
 
     // The label is read at render time, so no subscription is needed: every
     // change to it is already accompanied by a widget update from the kit
     // extension, and that is what asks the host for the next frame.
     const wrapped: EditorFactory = (tui, theme, keybindings) =>
       withBorderLabel(current(tui, theme, keybindings), getI18nStatus);
+    (wrapped as { [WRAPPED]?: boolean })[WRAPPED] = true;
     ctx.ui.setEditorComponent?.(wrapped);
+    return true;
+  };
+
+  pi.on("session_start", (_event, ctx: ExtensionContext) => {
+    if (!ctx.hasUI) return;
+    if (process.env.I18N_KIT_BORDER === "off") return;
+    if (ensureWrapped(ctx)) return;
+
+    /*
+     * The editor this wraps is installed by another extension, in its own
+     * session_start handler, and handlers run in load order — so whether one
+     * exists yet depends on which package the settings happen to list first.
+     * Rather than depend on that, keep looking for a short while.
+     */
+    const deadline = Date.now() + WRAP_TIMEOUT_MS;
+    const timer = setInterval(() => {
+      if (ensureWrapped(ctx) || Date.now() > deadline) clearInterval(timer);
+    }, WRAP_RETRY_MS);
+    timer.unref?.();
+  });
+
+  // An editor installed later still gets wrapped: extensions re-install theirs
+  // when their own settings change.
+  pi.on("turn_start", (_event, ctx: ExtensionContext) => {
+    if (!ctx.hasUI || process.env.I18N_KIT_BORDER === "off") return;
+    ensureWrapped(ctx);
   });
 }
