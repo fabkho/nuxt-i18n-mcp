@@ -11,7 +11,50 @@ import { writeLocaleFile } from '../io/json-writer.js'
 import { ToolError } from '../utils/errors.js'
 import { log } from '../utils/logger.js'
 import type { FrameworkMatch } from '../adapters/registry.js'
-import type { InitProjectConfigResult, GeneratedProjectConfig } from './types.js'
+
+/**
+ * The config `init` emits. Only fields the matched adapter cannot derive:
+ * writing a copy of what the framework already states creates a second source
+ * of truth that drifts silently (#305). The generic path is the exception —
+ * without localeDirs and defaultLocale nothing resolves at all.
+ */
+export interface GeneratedProjectConfig {
+  $schema: string
+  context: string
+  glossary: Record<string, string>
+  translationPrompt: string
+  localeNotes: Record<string, string>
+  /** Matches localeDirEntrySchema: a bare path, or a path bound to a layer. */
+  localeDirs?: Array<string | { path: string; layer: string }>
+  defaultLocale?: string
+  locales?: string[]
+}
+
+export interface InitProjectConfigResult {
+  config: GeneratedProjectConfig
+  detected: {
+    adapter: string
+    label: string
+    /** Detection score. 0 when nothing matched and generic was assumed. */
+    confidence: number
+    /**
+     * Whether the matched adapter resolves locales, layers and the default
+     * locale from framework config. False only for the generic adapter, which
+     * cannot resolve without them written into `.i18n-mcp.json`. Independent
+     * of whether this run carried locale settings forward from an existing
+     * file under `--force`.
+     */
+    derivesLocaleConfig: boolean
+    /** Other adapters that also scored, best first. */
+    runnersUp?: Array<{ name: string; confidence: number }>
+    /** Present when init could not find anything to point the config at. */
+    note?: string
+  }
+  /** Path relative to the project dir. */
+  configPath: string
+  written: boolean
+  overwritten: boolean
+}
 
 type Detected = InitProjectConfigResult['detected']
 type CarriedLocaleConfig = Pick<GeneratedProjectConfig, 'localeDirs' | 'defaultLocale' | 'locales'>

@@ -1,7 +1,7 @@
 import { existsSync } from 'node:fs'
 import { basename, extname, join } from 'node:path'
 import type { I18nConfig, LocaleDefinition } from '../config/types'
-import type { ScaffoldLocaleFileInfo } from '../core/types'
+import type { ScaffoldLocaleFileInfo } from '../core/ops-write'
 import { readLocaleData, resolveLocaleEntries } from '../io/locale-data'
 import { readLocale, writeLocale } from '../io/locale-io'
 import { getFormat } from '../io/formats'

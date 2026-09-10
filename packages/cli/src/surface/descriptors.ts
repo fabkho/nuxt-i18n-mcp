@@ -27,14 +27,9 @@ import {
 // so the core barrel is still not loaded to print usage text.
 import type { CheckUndefinedKeysResult } from '../core/ops-check.js'
 import type { FindDuplicateKeysResult } from '../core/ops-duplicates.js'
-import type { SearchTranslationsPage } from '../core/ops-read.js'
-import type {
-  CodeUsageResult,
-  FindOrphanKeysResult,
-  MissingTranslationsResult,
-  RemoveOrphanKeysResult,
-  TranslationStatusResult,
-} from '../core/types.js'
+import type { CodeUsageResult, FindOrphanKeysResult, RemoveOrphanKeysResult } from '../core/ops-orphans.js'
+import type { MissingTranslationsResult, SearchTranslationsPage } from '../core/ops-read.js'
+import type { TranslationStatusResult } from '../core/ops-status.js'
 // The result schemas. Imported outright, like the report mappings above: they
 // are what the tool registrar advertises to a host, and the CLI already loads
 // zod to read a project config.

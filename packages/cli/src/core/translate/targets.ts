@@ -12,7 +12,7 @@ import type {
   TranslateMode,
   TranslateSkipReason,
   TranslateMissingLocaleResult,
-} from '../types.js'
+} from './run.js'
 import { findLocaleImpl } from '../shared.js'
 
 /**

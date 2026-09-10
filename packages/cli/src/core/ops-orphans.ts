@@ -14,12 +14,180 @@ import { scanSourceFiles, toRelativePath, findOrphanKeysForConfig, buildIgnorePa
 import type { OrphanScanPlan, OrphanScanProgress, OrphanScanResult } from '../scanner/code-scanner.js'
 import { collectLinkedTargets } from '../scanner/linked-messages.js'
 import { getPatternSet } from '../scanner/patterns.js'
-import type { DeclaredNamespaceRef, FindOrphanKeysResult, RemoveOrphanKeysResult, CodeUsageResult, ProgressFn } from './types.js'
+import type { ProgressFn } from './types.js'
 import { ToolError } from '../utils/errors.js'
 
 import { log } from '../utils/logger.js'
 
 import { findLayerOrThrow, resolveReferenceLocale } from './shared.js'
+
+// ─── Refs the three scans share ──────────────────────────────────
+
+/** A key referenced only from apps outside its layer's consumption scope. */
+export interface MisplacedUsageRef {
+  key: string
+  /** Layer the key is defined in. */
+  layer: string
+  /** Out-of-scope scan units (apps or layers) where the key was found. */
+  usingApps: string[]
+}
+
+export interface DynamicKeyRef {
+  expression: string
+  /** Absent for context-free bare candidates, which have no single call site. */
+  file?: string
+  line?: number
+}
+
+export interface UnresolvedKeyWarningRef {
+  expression: string
+  file: string
+  line: number
+  callee: string
+  suggestedIgnorePattern?: string
+}
+
+/**
+ * One `declaredNamespaces` entry with the keys it answers for.
+ *
+ * `matchedKeys` is what makes a declaration auditable in both directions: the
+ * keys a reader would otherwise see in the orphan list, and — when it is empty
+ * — a declaration whose namespace no longer exists.
+ */
+export interface DeclaredNamespaceRef {
+  pattern: string
+  /** What keeps these keys alive, as declared in the config. */
+  reason: string
+  /** Keys of the checked layers this pattern covers. Empty means the declaration is stale. */
+  matchedKeys: string[]
+}
+
+export interface CodeUsageRef {
+  file: string
+  line: number
+  callee: string
+}
+
+// ─── find_orphan_keys ───────────────────────────────────────
+
+export interface FindOrphanKeysResult {
+  orphanKeys: Record<string, string[]>
+  uncertainKeys?: Record<string, string[]>
+  /**
+   * Keys kept alive solely by the bare-candidate net — nothing a frontend
+   * could call a usage references them; a dotted string somewhere (a comment,
+   * a data structure) merely shares their name. Not orphans, but where dead
+   * references hide.
+   */
+  candidateOnlyKeys?: Record<string, string[]>
+  candidateOnlyNote?: string
+  /** Why keys linked with `@:` from another message's value are not orphans. Present when any is. */
+  linkedNote?: string
+  /** Keys used only from apps that do not consume the owning layer. */
+  misplacedUsages?: MisplacedUsageRef[]
+  misplacedUsageNote?: string
+  /** Every declared namespace with the keys it covers. Present when any is declared. */
+  declaredNamespaces?: DeclaredNamespaceRef[]
+  declaredNamespaceNote?: string
+  summary: {
+    totalKeys: number
+    orphanCount: number
+    uncertainCount?: number
+    candidateOnlyCount?: number
+    misplacedCount?: number
+    dynamicMatchedCount?: number
+    ignoredCount?: number
+    /** Keys withheld from the orphan list by a declared namespace. */
+    declaredCount?: number
+    /** Keys withheld because another message's value links to them with `@:`. */
+    linkedCount?: number
+    usedCount?: number
+    filesScanned: number
+    /** Files a syntax frontend declined; pattern matching read them instead. */
+    filesDeclined?: number
+    layersChecked?: string[]
+    dirsScanned?: string[]
+    scanScope?: Record<string, string[]>
+    locale?: string
+    message?: string
+  }
+  dynamicKeyWarning?: string
+  dynamicKeys?: DynamicKeyRef[]
+  unresolvedKeyWarnings?: UnresolvedKeyWarningRef[]
+}
+
+// ─── scan_code_usage ────────────────────────────────────────
+
+/** Where each requested key is referenced in source. */
+export interface CodeUsageResult {
+  usages: Record<string, CodeUsageRef[]>
+  /** Requested keys with no reference anywhere in the scanned source. */
+  notFoundInCode?: string[]
+  /** Dynamic expressions that could reach the requested keys. */
+  dynamicKeys?: DynamicKeyRef[]
+  summary: {
+    uniqueKeysFound: number
+    totalReferences: number
+    filesScanned: number
+    /** Files a syntax frontend declined; pattern matching read them instead. */
+    filesDeclined?: number
+    dirsScanned?: string[]
+    message?: string
+  }
+}
+
+export interface ScanCodeUsageResult {
+  usages: Record<string, CodeUsageRef[]>
+  summary: {
+    uniqueKeysFound: number
+    totalReferences: number
+    filesScanned: number
+    /** Files a syntax frontend declined; pattern matching read them instead. */
+    filesDeclined?: number
+    dirsScanned: string[]
+  }
+  notFoundInCode?: string[]
+  dynamicKeys?: DynamicKeyRef[]
+}
+
+// ─── remove_orphan_keys ──────────────────────────────────────
+
+export interface RemoveOrphanKeysResult {
+  orphanKeys?: Record<string, string[]>
+  removed?: Record<string, string[]>
+  uncertainKeys?: Record<string, string[]>
+  misplacedUsages?: MisplacedUsageRef[]
+  misplacedUsageNote?: string
+  /** Every declared namespace with the keys it covers — the keys this run will not delete. */
+  declaredNamespaces?: DeclaredNamespaceRef[]
+  declaredNamespaceNote?: string
+  summary: {
+    dryRun?: boolean
+    totalKeys: number
+    orphanCount?: number
+    removedCount?: number
+    uncertainCount?: number
+    misplacedCount?: number
+    dynamicMatchedCount?: number
+    ignoredCount?: number
+    /** Keys withheld from the orphan list by a declared namespace. */
+    declaredCount?: number
+    /** Keys withheld because another message's value links to them with `@:`. */
+    linkedCount?: number
+    usedCount?: number
+    remainingCount?: number
+    filesScanned?: number
+    filesWritten?: number
+    layersChecked?: string[]
+    dirsScanned?: string[]
+    scanScope?: Record<string, string[]>
+    locale?: string
+    message?: string
+  }
+  dynamicKeyWarning?: string
+  dynamicKeys?: DynamicKeyRef[]
+  unresolvedKeyWarnings?: UnresolvedKeyWarningRef[]
+}
 
 const MISPLACED_USAGE_NOTE
   = 'Keys referenced only from apps that do not consume their layer. '

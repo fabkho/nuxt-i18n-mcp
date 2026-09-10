@@ -15,7 +15,7 @@ import {
 } from '../../src/core/translate/memory.js'
 import type { TranslationMemory } from '../../src/core/translate/memory.js'
 import { translateMissing, translateKey, writeTranslations } from '../../src/core/operations.js'
-import type { TranslateMissingOptions, TranslateMissingResult } from '../../src/core/types.js'
+import type { TranslateMissingOptions, TranslateMissingResult } from '../../src/core/translate/run.js'
 import { clearConfigCache } from '../../src/config/detector.js'
 import { clearFileCache } from '../../src/io/json-reader.js'
 import { fakeTranslator } from '../fixtures/translate-harness.js'

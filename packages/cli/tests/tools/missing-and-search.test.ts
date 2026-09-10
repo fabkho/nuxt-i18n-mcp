@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os'
 import { readLocaleFile } from '../../src/io/json-reader.js'
 import { getLeafKeys, getNestedValue } from '../../src/io/key-operations.js'
 import type { I18nConfig } from '../../src/config/types.js'
-import type { SearchKeyMatch, SearchMatch } from '../../src/core/types.js'
+import type { SearchKeyMatch, SearchMatch } from '../../src/core/ops-read.js'
 import { registerDetectorMock, registerFixtureConfig, playgroundDir, appAdminDir } from '../fixtures/mock-detector.js'
 
 // Register the shared detector mock (vi.mock is hoisted by Vitest)

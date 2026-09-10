@@ -26,6 +26,8 @@ export {
   findLocaleImpl,
   resolveProtectedLocales,
 } from './core/operations.js'
+// Every operation's own result shape, re-exported from the module that
+// produces it. `core/types.ts` below adds only what several of them share.
 export type {
   DuplicateKeyCollision,
   FindDuplicateKeysResult,
@@ -35,16 +37,63 @@ export type {
   UncertainKeyFinding,
   CheckUndefinedKeysResult,
   CheckUndefinedKeysSummary,
+  CodeUsageRef,
+  CodeUsageResult,
+  DeclaredNamespaceRef,
   DescribeProjectOutcome,
+  DescribeProjectResult,
+  DynamicKeyRef,
+  EmptyTranslationsResult,
+  FindOrphanKeysResult,
+  GeneratedProjectConfig,
   GetTranslationsByLayer,
   GetTranslationsOutcome,
   GetTranslationsResult,
+  InitProjectConfigResult,
+  LayerStatus,
   ListNamespacesResult,
+  LocaleDirInfo,
+  LocaleStatus,
+  MisplacedUsageRef,
   MissingTranslationsPage,
+  MissingTranslationsResult,
+  MoveTranslationKeyOutcome,
+  MoveTranslationKeyPlanEntry,
+  MoveTranslationKeyResult,
   NamespaceNode,
   PagedResult,
+  RemoveOrphanKeysResult,
+  RemoveTranslationsPreview,
+  RemoveTranslationsResult,
+  RenameTranslationKeyPreview,
+  RenameTranslationKeyResult,
+  ScaffoldLocaleFileInfo,
+  ScaffoldLocaleResult,
+  ScanCodeUsageResult,
+  SearchKeyMatch,
+  SearchMatch,
+  SearchMatchMode,
   SearchTranslationsPage,
+  SearchTranslationsResult,
+  TranslateAllLayersResult,
+  TranslateAllLayersSummary,
+  TranslateFailReason,
+  TranslateKeyLocaleIssue,
+  TranslateKeyResult,
+  TranslateKeySkip,
+  TranslateLayerTotals,
+  TranslateMissingCompactEntry,
+  TranslateMissingLocaleResult,
+  TranslateMissingOptions,
+  TranslateMissingOutcome,
+  TranslateMissingResult,
+  TranslateMode,
+  TranslateSkipReason,
+  TranslationStatusResult,
+  TranslationStatusSummary,
   TrimmedProjectConfig,
+  UnresolvedKeyWarningRef,
+  WriteTranslationsResult,
 } from './core/operations.js'
 
 // The operation table both surfaces are built from. The MCP server registers
@@ -70,7 +119,7 @@ export type {
   TranslationsRecord,
 } from './surface/types.js'
 
-// Core types
+// The shapes several operations share
 export * from './core/types.js'
 
 // Config

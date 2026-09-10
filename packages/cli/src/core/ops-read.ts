@@ -8,22 +8,14 @@ import { readdir } from 'node:fs/promises'
 
 import { detectI18nConfig, clearConfigCache } from '../config/detector.js'
 import { serializeLayerGraph } from '../config/layer-graph.js'
+import type { SerializedLayerGraph } from '../config/layer-graph.js'
 import type { I18nConfig, ProjectConfig } from '../config/types.js'
 import { readLocaleData, readLocaleDataIfPresent, resolveLocaleEntries } from '../io/locale-data.js'
 import { getFormat } from '../io/formats.js'
 import { getNestedValue, getLeafKeys } from '../io/key-operations.js'
 import { ToolError } from '../utils/errors.js'
 
-import type {
-  DescribeProjectResult,
-  LocaleDirInfo,
-  MissingTranslationsResult,
-  EmptyTranslationsResult,
-  SearchKeyMatch,
-  SearchMatch,
-  SearchMatchMode,
-  SearchTranslationsResult,
-} from './types.js'
+import type { LocaleRefInfo } from './types.js'
 import { findLayerOrThrow, findReferenceLocaleOrThrow, findLocaleImpl, localeRefInfo, resolveLayersToScan } from './shared.js'
 import { resolveProtectedLocales } from './ops-translate.js'
 
@@ -60,6 +52,30 @@ function paginate<T>(
 }
 
 // ─── discover ────────────────────────────────────────────────────
+
+/**
+ * The whole resolved project in one answer: the config, the locale dirs behind
+ * it, the topology those dirs form, and which locales are maintained by hand.
+ *
+ * A superset of `I18nConfig` rather than a wrapper around it, because every
+ * caller of the old three-call sequence merged the parts anyway and a nested
+ * `config` key would break each of them for nothing.
+ */
+export interface DescribeProjectResult extends I18nConfig {
+  /**
+   * Canonical codes of the locales the translate operations leave alone. The
+   * raw refs stay visible under `projectConfig.protectedLocales`.
+   */
+  protectedLocales: string[]
+  /** One entry per locale directory, with file counts and key namespaces. */
+  layers: LocaleDirInfo[]
+  /**
+   * Which layers are shared, which apps consume which layer, and what each
+   * alias points at — the topology behind the flat `layers` list, and what
+   * answers where a new key belongs.
+   */
+  layerGraph: SerializedLayerGraph
+}
 
 /**
  * The project-config fields that carry translation prose rather than structure.
@@ -132,6 +148,15 @@ export async function detectConfig(projectDir?: string): Promise<I18nConfig> {
   const dir = projectDir ?? process.cwd()
   clearConfigCache()
   return detectI18nConfig(dir)
+}
+
+export interface LocaleDirInfo {
+  layer: string
+  path: string
+  aliasOf?: string
+  fileCount: number
+  topLevelKeys?: string[]
+  namespaces?: string[]
 }
 
 /**
@@ -405,6 +430,18 @@ function summarizeByKey(
 
 // ─── get_missing_translations ──────────────────────────────────────
 
+export interface MissingTranslationsResult {
+  missing: Record<string, Record<string, string[]>>
+  summary: {
+    referenceLocale: string | LocaleRefInfo
+    targetLocales: Array<string | LocaleRefInfo>
+    layersScanned: string[]
+    totalMissingKeys: number
+    /** The step after this one, as the surface the call ran on phrases it. Present when there is one. */
+    message?: string
+  }
+}
+
 /**
  * The missing keys, capped. The unit is one key of one (layer, locale) pair —
  * the nested map flattened — while `summary.totalMissingKeys` stays the count
@@ -502,6 +539,17 @@ export async function getMissingTranslations(opts: {
   }
 }
 
+// ─── empty translations ──────────────────────────────────────
+
+export interface EmptyTranslationsResult {
+  emptyKeys: Record<string, Record<string, string[]>>
+  summary: {
+    totalEmpty: number
+    localesChecked: string[]
+    layersChecked: string[]
+  }
+}
+
 /**
  * Find translation keys that have empty string values in locale files.
  */
@@ -583,6 +631,62 @@ export async function collectEmptyTranslations(
       layersChecked: layersToScan.map(d => d.layer),
     },
   }
+}
+
+// ─── search_translations ─────────────────────────────────────
+
+/**
+ * One key in one locale of one layer — the detail rows, returned when the
+ * caller asks for them.
+ */
+export interface SearchMatch {
+  layer: string
+  locale: string
+  key: string
+  value: unknown
+}
+
+/**
+ * One key, however many layers and locales define it — the row a search
+ * returns by default.
+ *
+ * A key that exists in seven layers and thirty locales used to come back as
+ * dozens of near-identical rows, which an agent pays for and then has to group
+ * itself before it can answer the question it asked: does a translation for
+ * this text already exist, and where. Grouped here instead, because `layers`
+ * is the answer to the second half — one layer means reuse it, several mean
+ * the key is already duplicated.
+ */
+export interface SearchKeyMatch {
+  key: string
+  /** Every searched layer that defines the key, in layer order. */
+  layers: string[]
+  /** What `locale` holds for the key. */
+  value: unknown
+  /**
+   * Which locale `value` was read from: the reference locale where it defines
+   * the key, otherwise the first searched locale that does.
+   */
+  locale: string
+  /** How many of the searched locales define the key. */
+  localeCount: number
+}
+
+/** How `query` is compared against a key path or a value. */
+export type SearchMatchMode = 'contains' | 'exact' | 'fuzzy'
+
+export interface SearchTranslationsResult {
+  /**
+   * One row per key by default; one row per key and locale when the caller
+   * passed `includeLocales`.
+   */
+  matches: SearchKeyMatch[] | SearchMatch[]
+  /**
+   * How many rows matched, whichever shape they are in. Counted before any
+   * limit applies, so it stays the size of the finding rather than the size of
+   * the window returned.
+   */
+  totalMatches: number
 }
 
 /**

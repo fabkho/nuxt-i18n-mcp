@@ -15,7 +15,7 @@ import type {
   TranslateKeyResult,
   TranslateMissingOutcome,
   TranslateMissingResult,
-} from '../core/types.js'
+} from '../core/translate/run.js'
 import type { Surface } from './types.js'
 
 const NO_PROVIDER_CLI = 'No provider configured — nothing was translated. Pass --provider and --model '

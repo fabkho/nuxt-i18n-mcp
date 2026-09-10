@@ -18,8 +18,9 @@ import type { I18nConfig, LocaleDefinition } from '../config/types.js'
 
 import type { UndefinedKeyFinding } from './ops-check.js'
 import type { FindDuplicateKeysResult } from './ops-duplicates.js'
+import type { MissingTranslationsResult } from './ops-read.js'
+import type { TranslationStatusResult } from './ops-status.js'
 import { findLocaleImpl, resolveReferenceLocale } from './shared.js'
-import type { MissingTranslationsResult, TranslationStatusResult } from './types.js'
 
 export interface CodeQualityIssue {
   description: string

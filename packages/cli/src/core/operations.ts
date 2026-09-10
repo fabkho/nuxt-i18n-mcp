@@ -24,6 +24,23 @@ export {
   translateKey,
 } from './ops-translate.js'
 
+export type {
+  TranslateAllLayersResult,
+  TranslateAllLayersSummary,
+  TranslateFailReason,
+  TranslateKeyLocaleIssue,
+  TranslateKeyResult,
+  TranslateKeySkip,
+  TranslateLayerTotals,
+  TranslateMissingCompactEntry,
+  TranslateMissingLocaleResult,
+  TranslateMissingOptions,
+  TranslateMissingOutcome,
+  TranslateMissingResult,
+  TranslateMode,
+  TranslateSkipReason,
+} from './translate/run.js'
+
 export {
   describeProject,
   detectConfig,
@@ -37,14 +54,22 @@ export {
 
 export type {
   DescribeProjectOutcome,
+  DescribeProjectResult,
+  EmptyTranslationsResult,
   GetTranslationsByLayer,
   GetTranslationsOutcome,
   GetTranslationsResult,
   ListNamespacesResult,
+  LocaleDirInfo,
   MissingTranslationsPage,
+  MissingTranslationsResult,
   NamespaceNode,
   PagedResult,
+  SearchKeyMatch,
+  SearchMatch,
+  SearchMatchMode,
   SearchTranslationsPage,
+  SearchTranslationsResult,
   TrimmedProjectConfig,
 } from './ops-read.js'
 
@@ -55,13 +80,49 @@ export {
   moveTranslationKey,
   scaffoldLocaleFiles,
 } from './ops-write.js'
+
+export type {
+  MoveTranslationKeyOutcome,
+  MoveTranslationKeyPlanEntry,
+  MoveTranslationKeyResult,
+  RemoveTranslationsPreview,
+  RemoveTranslationsResult,
+  RenameTranslationKeyPreview,
+  RenameTranslationKeyResult,
+  ScaffoldLocaleFileInfo,
+  ScaffoldLocaleResult,
+  WriteTranslationsResult,
+} from './ops-write.js'
+
 export { initProjectConfig } from './ops-init.js'
+
+export type { GeneratedProjectConfig, InitProjectConfigResult } from './ops-init.js'
+
 export { getTranslationStatus } from './ops-status.js'
+
+export type {
+  LayerStatus,
+  LocaleStatus,
+  TranslationStatusResult,
+  TranslationStatusSummary,
+} from './ops-status.js'
 
 export {
   findOrphanKeys,
   scanCodeUsage,
   removeOrphanKeys,
+} from './ops-orphans.js'
+
+export type {
+  CodeUsageRef,
+  CodeUsageResult,
+  DeclaredNamespaceRef,
+  DynamicKeyRef,
+  FindOrphanKeysResult,
+  MisplacedUsageRef,
+  RemoveOrphanKeysResult,
+  ScanCodeUsageResult,
+  UnresolvedKeyWarningRef,
 } from './ops-orphans.js'
 
 export { findDuplicateKeys } from './ops-duplicates.js'
