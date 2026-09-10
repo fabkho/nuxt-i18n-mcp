@@ -24,8 +24,11 @@ const I18N_FACTORIES = new Set(['useI18n', 'useTranslation', 'useTranslations', 
 /**
  * Callees that are unambiguous wherever they appear: a Vue template's `$t`, or
  * `this.$t` in an options-API component. Nothing else is named that.
+ *
+ * `$d` and `$n` are absent by intent: they format a date or a number, so their
+ * argument is a value and never a key.
  */
-const ALWAYS_I18N = new Set(['$t', '$te', '$tc'])
+const ALWAYS_I18N = new Set(['$t', '$te', '$tc', '$tm', '$rt'])
 
 /**
  * Names that might be a translation function without proving it — the same set
@@ -36,7 +39,7 @@ const ALWAYS_I18N = new Set(['$t', '$te', '$tc'])
  * A call whose callee resolves to an i18n import is reported whatever it is
  * named, which is the point: the list bounds guesswork, not knowledge.
  */
-const MAYBE_I18N = new Set(['t', 'te', 'tc', '$t', '$te', '$tc'])
+const MAYBE_I18N = new Set(['t', 'te', 'tc', 'tm', 'rt', '$t', '$te', '$tc', '$tm', '$rt'])
 
 type Node = Record<string, any> // eslint-disable-line @typescript-eslint/no-explicit-any -- untyped AST from the parser
 
@@ -57,9 +60,16 @@ export function createOxcFrontend(): LanguageFrontend {
 
       const parsed: ParsedBlockPair[] = []
       for (const block of blocks) {
-        const ast = parseBlock(parse, block.source, filePath)
-        if (!ast) return null
-        parsed.push({ block, ast })
+        const ast = parseBlock(parse, block, filePath)
+        if (ast) {
+          parsed.push({ block, ast })
+          continue
+        }
+        // A script block carries the declarations every other block resolves
+        // against, so half a scope is worse evidence than the fallback's; a
+        // template expression costs only itself, and may not even be
+        // JavaScript (`xmlns:xlink="http://…"`).
+        if (block.kind === 'script') return null
       }
 
       return collectAcrossBlocks(parsed)
@@ -73,14 +83,21 @@ interface ParsedBlockPair { block: VueBlock, ast: ParsedBlock }
  * The parseable blocks of a file, or null to decline it. A .vue file with
  * neither a template nor a script tag is not an SFC: the block splitter would
  * read only the fragments it recognises and silently drop everything between
- * them — declining hands the whole file to the fallback instead. The same
- * goes for an SFC yielding no blocks at all.
+ * them — declining hands the whole file to the fallback instead. So does a
+ * script tag the splitter found no body for, which means the file is not laid
+ * out the way it reads.
+ *
+ * A template with nothing to lift out of it yields no blocks and is not
+ * declined: markup with no lookup in it is a file with no evidence, not a file
+ * that could not be read.
  */
 function readableBlocks(content: string, filePath: string): VueBlock[] | null {
-  if (!filePath.endsWith('.vue')) return [{ source: content, lineOffset: 0 }]
+  if (!filePath.endsWith('.vue')) return [{ kind: 'script', sources: [content], lineOffset: 0 }]
   if (!/<template[\s>]|<script[\s>]/.test(content)) return null
+
   const blocks = vueBlocks(content)
-  return blocks.length === 0 ? null : blocks
+  if (/<script[\s>]/.test(content) && !blocks.some(block => block.kind === 'script')) return null
+  return blocks
 }
 
 /**
@@ -97,9 +114,44 @@ function collectAcrossBlocks(parsed: ParsedBlockPair[]): CallSite[] {
 
   const sites: CallSite[] = []
   for (const { block, ast } of parsed) {
-    collect({ ...ast, i18nNames, constants }, sites, lineResolver(block.source, block.lineOffset))
+    const scoped = { ...ast, i18nNames, constants }
+    const lineAt = lineResolver(ast.source, block.lineOffset)
+    collect(scoped, sites, lineAt)
+    if (block.directive) collectDirective(block.directive, scoped, sites, lineAt)
   }
   return sites
+}
+
+/**
+ * `<i18n-t keypath="a.b">` and `v-t="'a.b'"` name a key without calling
+ * anything, so the key is the block's own expression rather than an argument.
+ * `v-t="{ path: 'a.b' }"` carries it in `path`; anything else the directive
+ * accepts (`args`, `locale`) is not a key.
+ */
+function collectDirective(directive: TemplateDirective, parsed: ParsedBlock, sites: CallSite[], lineAt: (offset: number) => number): void {
+  const [statement] = parsed.program.body ?? []
+  if (statement?.type !== 'ExpressionStatement') return
+
+  const node = directive === 'v-t' ? directivePath(unwrap(statement.expression)) : statement.expression
+  if (!node) return
+
+  for (const argument of readArguments(node, parsed)) {
+    if (argument.kind === 'unknown') continue
+    sites.push({ callee: directive, binding: 'resolved', argument, line: lineAt(node.start ?? 0) })
+  }
+}
+
+function directivePath(node: Node | undefined): Node | undefined {
+  if (node?.type !== 'ObjectExpression') return node
+  for (const property of node.properties ?? []) {
+    if (property.key?.name === 'path' || property.key?.value === 'path') return property.value
+  }
+  return undefined
+}
+
+/** Parentheses are nodes in this AST, and every reader below wants the expression. */
+function unwrap(node: Node | undefined): Node | undefined {
+  return node?.type === 'ParenthesizedExpression' ? unwrap(node.expression) : node
 }
 
 type ParseSync = typeof import('oxc-parser').parseSync
@@ -138,20 +190,31 @@ interface ParsedBlock {
   constants: ConstantTable
 }
 
-function parseBlock(parseSync: ParseSync, source: string, filePath: string): ParsedBlock | null {
+function parseBlock(parseSync: ParseSync, block: VueBlock, filePath: string): ParsedBlock | null {
   // .ts so TypeScript syntax parses; a plain .js file is a subset of it.
-  const result = parseSync(filePath.endsWith('.vue') ? 'block.ts' : filePath, source)
-  if (result.errors.length > 0) {
-    log.debug(`oxc declined ${filePath}: ${result.errors[0]?.message ?? 'parse error'}`)
-    return null
+  const name = filePath.endsWith('.vue') ? 'block.ts' : filePath
+  let firstError: string | undefined
+
+  for (const source of block.sources) {
+    const result = parseSync(name, source)
+    if (result.errors.length > 0) {
+      firstError ??= result.errors[0]?.message ?? 'parse error'
+      continue
+    }
+
+    return {
+      program: result.program as Node,
+      source,
+      i18nNames: collectI18nNames(result.program as Node),
+      constants: collectStringConstants(result.program as Node),
+    }
   }
 
-  return {
-    program: result.program as Node,
-    source,
-    i18nNames: collectI18nNames(result.program as Node),
-    constants: collectStringConstants(result.program as Node),
-  }
+  const where = `${filePath}:${block.lineOffset + 1}`
+  log.debug(block.kind === 'script'
+    ? `oxc declined ${filePath}: ${firstError ?? 'parse error'}`
+    : `oxc skipped a template expression at ${where}: ${firstError ?? 'parse error'}`)
+  return null
 }
 
 /**
@@ -278,24 +341,40 @@ function lineResolver(source: string, lineOffset: number): (offset: number) => n
 function collect(parsed: ParsedBlock, sites: CallSite[], lineAt: (offset: number) => number): void {
   walk(parsed.program, (node) => {
     if (node.type !== 'CallExpression') return
-    const site = toCallSite(node, parsed, lineAt)
-    if (site) sites.push(site)
+    sites.push(...toCallSites(node, parsed, lineAt))
   })
 }
 
-function toCallSite(node: Node, parsed: ParsedBlock, lineAt: (offset: number) => number): CallSite | undefined {
+/**
+ * One call yields one site per key it can ask for — several when the key is
+ * chosen inside the call, none when the callee is not a translation function.
+ */
+function toCallSites(node: Node, parsed: ParsedBlock, lineAt: (offset: number) => number): CallSite[] {
   const callee = resolveCallee(node.callee, parsed.i18nNames)
-  if (!callee) return undefined
-  if (!callee.resolved && !MAYBE_I18N.has(callee.name)) return undefined
+  if (!callee) return []
+  if (!callee.resolved && !MAYBE_I18N.has(callee.name)) return []
 
   const [first] = node.arguments ?? []
-  if (!first) return undefined
+  if (!first) return []
 
-  return {
-    callee: callee.name,
-    binding: callee.resolved ? 'resolved' : 'ambiguous',
-    argument: readArgument(first, parsed),
-    line: lineAt(node.start ?? 0),
+  const line = lineAt(node.start ?? 0)
+  const seen = new Set<string>()
+  const sites: CallSite[] = []
+  for (const argument of readArguments(first, parsed)) {
+    const id = argumentId(argument)
+    if (seen.has(id)) continue
+    seen.add(id)
+    sites.push({ callee: callee.name, binding: callee.resolved ? 'resolved' : 'ambiguous', argument, line })
+  }
+  return sites
+}
+
+function argumentId(argument: CallArgument): string {
+  switch (argument.kind) {
+    case 'static': return `static:${argument.value}`
+    case 'template': return `template:${argument.expression}`
+    case 'concat': return `concat:${argument.prefix}`
+    case 'unknown': return 'unknown'
   }
 }
 
@@ -326,6 +405,36 @@ function resolveMemberCallee(node: Node, i18nNames: Set<string>): ResolvedCallee
   const name = node.property.name
   const receiverIsI18n = node.object?.type === 'Identifier' && i18nNames.has(node.object.name)
   return { name, resolved: ALWAYS_I18N.has(name) || (receiverIsI18n && MAYBE_I18N.has(name)) }
+}
+
+/**
+ * Every key one argument position can produce.
+ *
+ * A key chosen inside the call — `t(plural ? 'a.many' : 'a.one')`, `t(x ?? 'a.fallback')`
+ * — is a use of each literal it can reach, so each becomes its own site; an arm
+ * that is not a literal contributes nothing rather than making the whole call
+ * unreadable.
+ */
+function readArguments(node: Node | undefined, parsed: ParsedBlock): CallArgument[] {
+  if (!node) return []
+
+  if (node.type === 'ParenthesizedExpression') return readArguments(node.expression, parsed)
+
+  if (node.type === 'ConditionalExpression') {
+    return [...readArguments(node.consequent, parsed), ...readArguments(node.alternate, parsed)]
+  }
+
+  // `&&` is left out: its literal side is what the call produces only when the
+  // other side is falsy, which is the case the code writes to avoid a lookup.
+  if (node.type === 'LogicalExpression' && (node.operator === '??' || node.operator === '||')) {
+    return [...readArguments(node.left, parsed), ...readArguments(node.right, parsed)]
+  }
+
+  if (node.type === 'SequenceExpression') {
+    return (node.expressions ?? []).flatMap((child: Node) => readArguments(child, parsed))
+  }
+
+  return [readArgument(node, parsed)]
 }
 
 function readArgument(node: Node, parsed: ParsedBlock): CallArgument {
@@ -426,38 +535,112 @@ function vueBlocks(content: string): VueBlock[] {
   return [...scriptBlocks(content), ...templateExpressionBlocks(content)]
 }
 
-interface VueBlock { source: string, lineOffset: number }
+/**
+ * One parseable region of an SFC.
+ *
+ * `sources` are spellings of the same region, tried in order until one parses:
+ * a Vue attribute is not required to be a single JavaScript expression, and
+ * which wrapping it needs cannot be told from the text alone. Every spelling
+ * keeps the region's newlines where they were, so the lines it reports stay
+ * the file's own.
+ */
+interface VueBlock {
+  kind: BlockKind
+  sources: string[]
+  lineOffset: number
+  /** Set when the region is an attribute that names a key instead of calling for one. */
+  directive?: TemplateDirective
+}
+
+/** A script block declines the file; a template block declines only itself. */
+type BlockKind = 'script' | 'template'
+
+/** Attribute spellings of a lookup, named as written so a report can point at one. */
+type TemplateDirective = 'keypath' | 'v-t'
 
 const lineOffsetAt = (content: string, offset: number): number =>
   content.slice(0, offset).split('\n').length - 1
 
+/**
+ * An opening tag's attributes. Not `[^>]*`: `<script setup generic="T extends
+ * Record<string, any>">` carries a `>` inside a quoted value, and stopping the
+ * tag there makes the block body start mid-attribute — unparseable, which
+ * declined the file.
+ */
+const OPEN_TAG_ATTRS = '(?:"[^"]*"|\'[^\']*\'|[^>])*'
+
+const SCRIPT_BLOCK = new RegExp(`<script(?=[\\s>])(${OPEN_TAG_ATTRS})>([\\s\\S]*?)</script\\s*>`, 'g')
+
 function scriptBlocks(content: string): VueBlock[] {
   const blocks: VueBlock[] = []
-  for (const match of content.matchAll(/<script[^>]*>([\s\S]*?)<\/script>/g)) {
+  for (const match of content.matchAll(SCRIPT_BLOCK)) {
     // Offset to the block body, not the tag: an opening tag written across
     // several lines (`<script\n  setup\n  lang="ts">`) otherwise shifts every
     // line the block reports.
-    const openTagLength = match[0].length - (match[1]?.length ?? 0) - '</script>'.length
-    blocks.push({ source: match[1] ?? '', lineOffset: lineOffsetAt(content, (match.index ?? 0) + openTagLength) })
-  }
-  return blocks
-}
-
-function templateExpressionBlocks(content: string): VueBlock[] {
-  const template = maskSpans(content, NON_TEMPLATE)
-  const blocks: VueBlock[] = []
-  for (const match of template.matchAll(/\{\{([\s\S]*?)\}\}|(?:v-[a-z-]+|:[\w-]+|@[\w-]+)=(?:"([^"]*)"|'([^']*)')/g)) {
-    const expression = match[1] ?? match[2] ?? match[3]
-    if (!expression?.trim()) continue
-    // Wrapped so a bare expression parses as a statement.
-    blocks.push({ source: `(${expression})`, lineOffset: lineOffsetAt(template, match.index ?? 0) })
+    const openTagLength = '<script'.length + (match[1] ?? '').length + '>'.length
+    blocks.push({ kind: 'script', sources: [match[2] ?? ''], lineOffset: lineOffsetAt(content, (match.index ?? 0) + openTagLength) })
   }
   return blocks
 }
 
 /**
+ * Template regions that carry a key: every interpolation and directive
+ * expression, plus the static `keypath="a.b"` of `<i18n-t>` — an attribute
+ * value rather than an expression, so it is quoted into one.
+ *
+ * The static form is matched on any element: the component can be registered
+ * under another name, and `keypath` is vue-i18n's attribute wherever it is
+ * written. Group 1 is an interpolation, 2/3-4 a directive and its expression,
+ * 5-6 a static keypath.
+ */
+const TEMPLATE_EXPRESSION
+  = /\{\{([\s\S]*?)\}\}|(v-[a-z-]+|:[\w-]+|@[\w-]+)=(?:"([^"]*)"|'([^']*)')|(?<![\w:-])keypath=(?:"([^"]*)"|'([^']*)')/g
+
+function templateExpressionBlocks(content: string): VueBlock[] {
+  const template = maskSpans(content, NON_TEMPLATE)
+  const blocks: VueBlock[] = []
+  for (const match of template.matchAll(TEMPLATE_EXPRESSION)) {
+    const lineOffset = lineOffsetAt(template, match.index ?? 0)
+    const literal = match[5] ?? match[6]
+    if (literal !== undefined) {
+      if (!literal.trim()) continue
+      blocks.push({ kind: 'template', sources: [`(${JSON.stringify(literal)})`], lineOffset, directive: 'keypath' })
+      continue
+    }
+
+    const expression = match[1] ?? match[3] ?? match[4]
+    if (!expression?.trim()) continue
+    blocks.push({ kind: 'template', sources: expressionSources(expression), lineOffset, directive: directiveOf(match[2]) })
+  }
+  return blocks
+}
+
+function directiveOf(attribute: string | undefined): TemplateDirective | undefined {
+  if (attribute === 'v-t') return 'v-t'
+  if (attribute === ':keypath') return 'keypath'
+  return undefined
+}
+
+/**
+ * `(expr)` is what a Vue attribute usually is. `@click="a(); b()"` is a
+ * statement list, which only parses as a block, and `v-for="(_, slot) of $slots"`
+ * is a binding head no expression grammar accepts — the head names nothing a
+ * lookup could use, so only the iterable after it is parsed. Blanked rather
+ * than cut, so what follows keeps its offset and its line.
+ */
+function expressionSources(expression: string): string[] {
+  const sources = [`(${expression})`, `{ ${expression} }`]
+  const head = FOR_BINDING_HEAD.exec(expression)
+  if (head) sources.push(`(${head[0].replace(/[^\n]/g, ' ')}${expression.slice(head[0].length)})`)
+  return sources
+}
+
+const FOR_BINDING_HEAD = /^[\s\S]*?\s(?:of|in)\s/
+
+/**
  * Regions of an SFC that are definitely not template markup: HTML comments,
- * and the script and style blocks whole.
+ * the script and style blocks whole, and `<i18n>` custom blocks (messages,
+ * read as definitions elsewhere).
  *
  * A commented-out `:title="$t('a.b')"` is not a usage — counted as one, it
  * keeps a dead key alive forever, and `check --write` writes keys back out of
@@ -469,7 +652,7 @@ function templateExpressionBlocks(content: string): VueBlock[] {
  * Not an attempt to locate the root template: a nested `<template #slot>` is
  * template like its parent, and only what cannot be is taken out.
  */
-const NON_TEMPLATE = /<!--[\s\S]*?-->|<(script|style)[^>]*>[\s\S]*?<\/\1>/gi
+const NON_TEMPLATE = new RegExp(`<!--[\\s\\S]*?-->|<(script|style|i18n)(?=[\\s/>])${OPEN_TAG_ATTRS}>[\\s\\S]*?</\\1\\s*>`, 'gi')
 
 /**
  * Blank out every matched span, newlines kept, so the text around it stays at

@@ -285,6 +285,219 @@ describe('what is not template', () => {
   })
 })
 
+/**
+ * A Vue attribute is not required to be a JavaScript expression, and the ones
+ * that are not used to cost the whole component: the fallback that then read it
+ * is line-based and cannot see a call written across several lines.
+ */
+describe('a template expression the parser cannot take', () => {
+  it('reads a multi-line call in a component that also iterates $slots', async () => {
+    const evidence = await scan(
+      [
+        '<template>',
+        '  <BaseInput',
+        '    v-for="(_, slot) of $slots"',
+        '    :key="slot"',
+        '    :label="',
+        '      $t(',
+        `        'components.input.baseTextarea.label',`,
+        '      )',
+        '    "',
+        '  />',
+        '</template>',
+      ].join('\n'),
+      'BaseTextarea.vue',
+    )
+
+    expect(evidence?.usages).toEqual([
+      { key: 'components.input.baseTextarea.label', file: 'BaseTextarea.vue', line: 6, callee: '$t' },
+    ])
+  })
+
+  it('reads a handler that is two statements rather than one expression', async () => {
+    const evidence = await scan(
+      [
+        '<template>',
+        '  <button',
+        `    @click="collapsed = false; emit('update:collapsed', $t('a.toast'))"`,
+        '  >',
+        `    {{ $t('a.label') }}`,
+        '  </button>',
+        '</template>',
+      ].join('\n'),
+      'AdminSidebar.vue',
+    )
+
+    expect(evidence?.usages.map(u => ({ key: u.key, line: u.line })).sort((a, b) => a.key.localeCompare(b.key)))
+      .toEqual([{ key: 'a.label', line: 5 }, { key: 'a.toast', line: 3 }])
+  })
+
+  it('keeps reading a component whose attribute is not JavaScript at all', async () => {
+    const evidence = await scan(
+      [
+        '<template>',
+        '  <svg xmlns:xlink="http://www.w3.org/1999/xlink">',
+        `    <title>{{ $t('components.svg.outlook.title') }}</title>`,
+        '  </svg>',
+        '</template>',
+      ].join('\n'),
+      'OutlookIcon.vue',
+    )
+
+    expect(evidence?.usages.map(u => ({ key: u.key, line: u.line })))
+      .toEqual([{ key: 'components.svg.outlook.title', line: 3 }])
+  })
+
+  it('reads a script whose opening tag carries a > inside an attribute', async () => {
+    const evidence = await scan(
+      [
+        '<script setup lang="ts" generic="T extends Record<string, any>">',
+        `const label = $t('a.generic')`,
+        '</script>',
+      ].join('\n'),
+      'VerticalTabBar.vue',
+    )
+
+    expect(evidence?.usages.map(u => ({ key: u.key, line: u.line }))).toEqual([{ key: 'a.generic', line: 2 }])
+  })
+})
+
+/**
+ * A key chosen inside the call is still a key the code asks for. Reading only
+ * the argument's outermost shape reported none of them, which leaves every one
+ * of the branches an orphan.
+ */
+describe('a key chosen inside the call', () => {
+  it('reports both arms of a ternary', async () => {
+    const evidence = await scan(`const label = $t(value ? 'common.terms.yes' : 'common.terms.no')`)
+
+    expect(evidence?.usages.map(u => u.key)).toEqual(['common.terms.yes', 'common.terms.no'])
+  })
+
+  it('reports the fallback of ?? and of ||', async () => {
+    const evidence = await scan([
+      `const a = $t(custom ?? 'a.fallback')`,
+      `const b = $t(custom || 'b.fallback')`,
+    ].join('\n'))
+
+    expect(evidence?.usages.map(u => u.key)).toEqual(['a.fallback', 'b.fallback'])
+  })
+
+  it('takes what it can read from an arm and nothing from the other', async () => {
+    const evidence = await scan(`const label = $t(custom ? someKey : 'a.one')`)
+
+    expect(evidence?.usages.map(u => u.key)).toEqual(['a.one'])
+    expect(evidence?.dynamicKeys).toEqual([])
+  })
+
+  it('sends an interpolated arm down the dynamic path', async () => {
+    const evidence = await scan('const label = $t(custom ? `a.${variant}` : \'a.one\')')
+
+    expect(evidence?.usages.map(u => u.key)).toEqual(['a.one'])
+    expect(evidence?.dynamicKeys[0]?.expression).toBe('`a.${variant}`')
+  })
+
+  it('reports the arms of a ternary written in a template binding', async () => {
+    const evidence = await scan(
+      [
+        '<template>',
+        '  <ActionButton',
+        `    :default-text="t(repairPanel ? 'pages.displays.pairing.repairNow' : 'pages.displays.pairing.pairNow')"`,
+        '  />',
+        '</template>',
+        '<script setup>',
+        `import { useI18n } from 'vue-i18n'`,
+        'const { t } = useI18n()',
+        '</script>',
+      ].join('\n'),
+      'PairDisplay.vue',
+    )
+
+    expect(evidence?.usages.map(u => ({ key: u.key, line: u.line }))).toEqual([
+      { key: 'pages.displays.pairing.repairNow', line: 3 },
+      { key: 'pages.displays.pairing.pairNow', line: 3 },
+    ])
+  })
+})
+
+/** Lookups vue-i18n spells as markup or as another function name. */
+describe('the idioms that are not a t() call', () => {
+  it('reads a static keypath attribute', async () => {
+    const evidence = await scan(
+      [
+        '<template>',
+        '  <i18n-t',
+        '    keypath="common.components.acceptTerms.acceptPrivacy"',
+        '    tag="span"',
+        '  />',
+        '</template>',
+      ].join('\n'),
+      'AcceptTermsCheckbox.vue',
+    )
+
+    expect(evidence?.usages).toEqual([
+      { key: 'common.components.acceptTerms.acceptPrivacy', file: 'AcceptTermsCheckbox.vue', line: 3, callee: 'keypath' },
+    ])
+  })
+
+  it('reads a bound keypath that resolves to a literal', async () => {
+    const evidence = await scan(
+      [
+        '<template>',
+        `  <I18nT :keypath="\`\${base}.claim\`" />`,
+        '</template>',
+        '<script setup>',
+        `const base = 'components.poweredByStripe'`,
+        '</script>',
+      ].join('\n'),
+      'PoweredByStripe.vue',
+    )
+
+    expect(evidence?.usages.map(u => u.key)).toEqual(['components.poweredByStripe.claim'])
+  })
+
+  it('reads v-t in both of its spellings', async () => {
+    const evidence = await scan(
+      [
+        '<template>',
+        `  <p v-t="'a.plain'" />`,
+        `  <p v-t="{ path: 'a.witharguments', args: { count } }" />`,
+        '</template>',
+      ].join('\n'),
+      'Terms.vue',
+    )
+
+    expect(evidence?.usages.map(u => ({ key: u.key, line: u.line, callee: u.callee }))).toEqual([
+      { key: 'a.plain', line: 2, callee: 'v-t' },
+      { key: 'a.witharguments', line: 3, callee: 'v-t' },
+    ])
+  })
+
+  it('counts the message-table lookups', async () => {
+    const evidence = await scan(`
+      import { useI18n } from 'vue-i18n'
+      const i18n = useI18n()
+      const { tm, rt } = useI18n()
+      const a = $tm('a.list')
+      const b = i18n.tm('b.list')
+      const c = tm('c.list')
+      const d = $rt('d.entry')
+      const e = rt('e.entry')
+    `)
+
+    expect(evidence?.usages.map(u => u.key)).toEqual(['a.list', 'b.list', 'c.list', 'd.entry', 'e.entry'])
+  })
+
+  it('does not count a date or a number format as a lookup', async () => {
+    const evidence = await scan(`
+      const a = $d('short.date')
+      const b = $n('currency.eur')
+    `)
+
+    expect(evidence?.usages).toEqual([])
+  })
+})
+
 describe('declining a file', () => {
   // Declining sends the file to the pattern matcher. Returning nothing would
   // silently drop every key it contains, which is the direction that deletes
@@ -308,6 +521,28 @@ const label = t(\`admin.dyn.\${variant}\`)`,
 
   it('declines an SFC with no block it recognises', async () => {
     expect(await frontend.read("const label = t('a.b')", 'odd.vue')).toBeNull()
+  })
+
+  // The script holds the declarations every other block resolves against, so
+  // reading the rest of the file would resolve names against half a scope.
+  it('declines a file whose script block is unparseable', async () => {
+    const sites = await frontend.read(
+      [
+        '<script setup>',
+        'const = = =',
+        '</script>',
+        `<template><p>{{ $t('a.b') }}</p></template>`,
+      ].join('\n'),
+      'Broken.vue',
+    )
+
+    expect(sites).toBeNull()
+  })
+
+  // Markup with no lookup in it is a file with no evidence, not a file that
+  // could not be read — the fallback has nothing better to offer.
+  it('does not decline a template that holds no expression at all', async () => {
+    expect(await frontend.read('<template><div class="skeleton" /></template>', 'Skeleton.vue')).toEqual([])
   })
 
   it('reads only the languages it claims', () => {
