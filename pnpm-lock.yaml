@@ -235,21 +235,6 @@ importers:
         specifier: ^4.4.2
         version: 4.4.2(magicast@0.5.4)
 
-  themes/pi:
-    devDependencies:
-      '@earendil-works/pi-coding-agent':
-        specifier: ^0.84.0
-        version: 0.84.4(@modelcontextprotocol/sdk@1.30.0(zod@4.4.3))(ws@8.21.3)(zod@4.4.3)
-      '@earendil-works/pi-tui':
-        specifier: ^0.84.0
-        version: 0.84.4
-      typescript:
-        specifier: ^5.8.0
-        version: 5.9.3
-      vitest:
-        specifier: ^3.0.0
-        version: 3.2.4(@types/debug@4.1.13)(@types/node@22.19.15)(jiti@2.7.0)(lightningcss@1.33.0)(terser@5.46.1)(tsx@4.23.12)(yaml@2.9.0)
-
 packages:
 
   '@ai-sdk/gateway@3.0.174':

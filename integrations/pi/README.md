@@ -77,6 +77,22 @@ it. `I18N_KIT_STATUS=off` disables it.
 The extension prefers a project-local `the-i18n-cli`, then a global install,
 then `npx @the-i18n-kit/cli@latest`.
 
+## Rendering coverage elsewhere
+
+The published status is readable in-process, so another extension can render the
+same figure where a given setup actually looks — an editor border, say. Read it
+from the global symbol `the-i18n-kit.pi.status`:
+
+```ts
+const channel = (globalThis as Record<symbol, { value?: string; missing?: number }>)[
+  Symbol.for("the-i18n-kit.pi.status")
+];
+channel?.value; // "🌐 4 missing"
+```
+
+Set `hasPersistentSurface` on that object and the widget stops announcing the
+standing figure, leaving it to you and confining itself to change.
+
 ## Other hosts
 
 Claude Code gets guardrail hooks and a status line, Codex gets conventions —

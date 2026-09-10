@@ -1,0 +1,24 @@
+{
+  "version": 2,
+  "sourceLocale": "en-US",
+  "entries": {
+    "default": {
+      "booking.confirm": {
+        "fa1e17d8f8632479": [
+          "es-ES"
+        ]
+      },
+      "booking.resource": {
+        "eb7a842ff958c49c": [
+          "es-ES"
+        ]
+      },
+      "booking.upcoming": {
+        "a7dced7d9719ec3d": [
+          "es-ES",
+          "fr-FR"
+        ]
+      }
+    }
+  }
+}
