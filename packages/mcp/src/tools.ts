@@ -62,7 +62,7 @@ export function toolErrorResponse(tool: string, error: unknown) {
 const projectDirSchema = z
   .string()
   .optional()
-  .describe('Absolute path to the project root. Defaults to I18N_PROJECT_DIR, then server cwd. When the server has a root, a path outside it is refused. Example: "/home/user/my-app".')
+  .describe('Absolute path to the project root. Defaults to the server\'s configured root (I18N_PROJECT_DIR or the client\'s first root), then server cwd. When the server has a root, a path outside it is refused. Example: "/home/user/my-app".')
 
 /** Register every descriptor the server advertises as a tool. */
 export function registerTools(
@@ -109,7 +109,7 @@ export function registerFromDescriptor(
         const { projectDir, ...rest } = args
         const operationArgs = {
           ...rest,
-          projectDir: ctx.scope.projectDirFor(projectDir as string | undefined),
+          projectDir: await ctx.scope.projectDirFor(projectDir as string | undefined),
         }
         await assertReportPaths(descriptor, operationArgs)
         const result = await descriptor.run(

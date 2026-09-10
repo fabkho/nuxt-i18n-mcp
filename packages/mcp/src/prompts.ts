@@ -21,13 +21,13 @@ export function registerPrompts(server: McpServer, scope: ProjectScope): void {
       argsSchema: z.object({
         layer: z.string().optional().describe('Target layer (e.g., "root", "app-admin"). If omitted, uses layerRules from project config.'),
         namespace: z.string().optional().describe('Key namespace for the feature (e.g., "admin.users", "common.actions")'),
-        projectDir: z.string().optional().describe('Absolute path to the Nuxt project root. Defaults to I18N_PROJECT_DIR, then server cwd. A path outside a configured root is refused.'),
+        projectDir: z.string().optional().describe('Absolute path to the Nuxt project root. Defaults to the server\'s configured root, then server cwd. A path outside a configured root is refused.'),
       }),
     },
     async ({ layer, namespace, projectDir }) => {
       // Outside the try: a refused directory is the caller's mistake to see,
       // not a project whose config happened to be unreadable.
-      const dir = scope.projectDirFor(projectDir)
+      const dir = await scope.projectDirFor(projectDir)
       let projectConfigSection = ''
 
       try {
@@ -77,11 +77,11 @@ Follow these steps:
       description: 'Add a new language to the project: update framework config, scaffold empty locale files, then translate all keys.',
       argsSchema: z.object({
         language: z.string().describe('Language to add (e.g., "Swedish", "sv", "sv-SE")'),
-        projectDir: z.string().optional().describe('Absolute path to the project root. Defaults to I18N_PROJECT_DIR, then server cwd. A path outside a configured root is refused.'),
+        projectDir: z.string().optional().describe('Absolute path to the project root. Defaults to the server\'s configured root, then server cwd. A path outside a configured root is refused.'),
       }),
     },
     async ({ language, projectDir }) => {
-      const dir = scope.projectDirFor(projectDir)
+      const dir = await scope.projectDirFor(projectDir)
       let configSection = ''
 
       try {

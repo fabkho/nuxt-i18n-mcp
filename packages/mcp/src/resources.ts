@@ -4,6 +4,7 @@
  * Resources resolve their own config (cached after first detection) — no prior
  * discover call required. Cross-call ordering dependencies are incompatible
  * with the stateless request/response model of MCP 2026-07-28.
+
  */
 
 import { ResourceTemplate } from '@modelcontextprotocol/server'
@@ -21,7 +22,7 @@ export function registerResources(server: McpServer, scope: ProjectScope): void 
     'locale-file',
     new ResourceTemplate('i18n:///{layer}/{locale}', {
       list: async () => {
-        const config = getCachedConfig() ?? await detectI18nConfig(scope.projectDirFor(undefined)).catch(() => null)
+        const config = getCachedConfig() ?? await detectI18nConfig(await scope.projectDirFor(undefined)).catch(() => null)
         if (!config) {
           return { resources: [] }
         }
@@ -52,7 +53,7 @@ export function registerResources(server: McpServer, scope: ProjectScope): void 
       mimeType: 'application/json',
     },
     async (uri, { layer, locale }) => {
-      const config = getCachedConfig() ?? await detectI18nConfig(scope.projectDirFor(undefined))
+      const config = getCachedConfig() ?? await detectI18nConfig(await scope.projectDirFor(undefined))
       const localeDef = findLocaleImpl(config, locale as string)
       if (!localeDef) {
         throw new Error(`Locale not found: ${locale}`)

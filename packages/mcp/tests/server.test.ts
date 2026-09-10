@@ -1,7 +1,8 @@
 import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest'
-import { join } from 'node:path'
+import { basename, join } from 'node:path'
 import { mkdtemp, rm, mkdir, symlink, writeFile, readFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
+import { pathToFileURL } from 'node:url'
 import { createMcpHandler, InMemoryTransport } from '@modelcontextprotocol/server'
 import type { McpHttpHandler, McpServer } from '@modelcontextprotocol/server'
 import { Client, StreamableHTTPClientTransport } from '@modelcontextprotocol/client'
@@ -806,13 +807,86 @@ describe('a server with no configured root', () => {
     await rm(arbitraryDir, { recursive: true, force: true })
   })
 
-  // Confinement is opt-in: `npx` on a developer's machine, with no env var,
-  // must keep working exactly as before.
-  it('accepts any project directory when the environment names no root', async () => {
+  // Confinement is opt-in: `npx` on a developer's machine, with no env var and
+  // a client that advertises no roots, must keep working exactly as before.
+  it('accepts any project directory when neither the environment nor the client names a root', async () => {
     const { result, json } = await callToolOn(unconfinedClient, 'discover', { projectDir: arbitraryDir })
 
     expect(result.isError).toBeFalsy()
     expect(json?.defaultLocale).toBe('de')
+  })
+})
+
+describe('roots advertised by the client', () => {
+  let clientRootDir: string
+
+  /** A client that advertises `roots` and answers `roots/list` with `roots`. */
+  async function connectWithRoots(server: McpServer, roots: string[]): Promise<Client> {
+    const c = new Client({ name: 'roots-client', version: '0.0.0' }, { capabilities: { roots: {} } })
+    c.setRequestHandler('roots/list', () => ({
+      roots: roots.map(dir => ({ uri: pathToFileURL(dir).href, name: basename(dir) })),
+    }))
+    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair()
+    await Promise.all([server.connect(serverTransport), c.connect(clientTransport)])
+    return c
+  }
+
+  beforeAll(async () => {
+    clientRootDir = await makeProject({}, tmpdir())
+    await writeFile(
+      join(clientRootDir, 'i18n', 'locales', 'de.json'),
+      JSON.stringify({ greeting: 'Aus dem Client-Root' }),
+    )
+  })
+
+  afterAll(async () => {
+    await rm(clientRootDir, { recursive: true, force: true })
+  })
+
+  it('takes the first client root as the default project directory and the boundary', async () => {
+    const saved = process.env.I18N_PROJECT_DIR
+    delete process.env.I18N_PROJECT_DIR
+    let rootsClient: Client
+    try {
+      const { createServer } = await import('../src/server.js')
+      rootsClient = await connectWithRoots(await createServer(), [clientRootDir])
+    } finally {
+      if (saved === undefined) delete process.env.I18N_PROJECT_DIR
+      else process.env.I18N_PROJECT_DIR = saved
+    }
+
+    try {
+      const { json } = await callToolOn(rootsClient, 'search_translations', {
+        query: 'Aus dem Client-Root',
+        searchIn: 'values',
+      })
+      expect(json?.totalMatches).toBe(1)
+
+      const refused = await callToolOn(rootsClient, 'discover', { projectDir })
+      expect(refused.result.isError).toBe(true)
+      expect(refused.text).toContain('[PROJECT_DIR_OUTSIDE_ROOT]')
+    } finally {
+      await rootsClient.close()
+    }
+  })
+
+  it('keeps I18N_PROJECT_DIR as the default and the boundary when the client also offers a root', async () => {
+    const { createServer } = await import('../src/server.js')
+    const rootsClient = await connectWithRoots(await createServer(), [clientRootDir])
+    try {
+      // The env root, not the client's: its de.json holds no such value.
+      const { json } = await callToolOn(rootsClient, 'search_translations', {
+        query: 'Aus dem Client-Root',
+        searchIn: 'values',
+      })
+      expect(json?.totalMatches).toBe(0)
+
+      const refused = await callToolOn(rootsClient, 'discover', { projectDir: clientRootDir })
+      expect(refused.result.isError).toBe(true)
+      expect(refused.text).toContain('[PROJECT_DIR_OUTSIDE_ROOT]')
+    } finally {
+      await rootsClient.close()
+    }
   })
 })
 
