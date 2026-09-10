@@ -144,12 +144,14 @@ function harness(cwd: string, statusResults: string[], tagColors = false) {
     registerCommand: (_name: string, options: { handler: (args: string, ctx: unknown) => Promise<void> }) => {
       commandHandler = options.handler;
     },
-    exec: vi.fn(async () => ({
-      stdout: statusResults[Math.min(execCount++, statusResults.length - 1)],
-      stderr: "",
-      code: 0,
-      killed: false,
-    })),
+    exec: vi.fn(async () => {
+      const next = statusResults[Math.min(execCount++, statusResults.length - 1)] ?? "";
+      // A result starting with "!" stands for a failed CLI run, the rest being stderr.
+      if (next.startsWith("!")) {
+        return { stdout: "", stderr: next.slice(1), code: 1, killed: false };
+      }
+      return { stdout: next, stderr: "", code: 0, killed: false };
+    }),
   };
   // A theme that returns text untouched, so assertions stay about content, and a
   // TUI whose renders are counted rather than drawn.
@@ -394,6 +396,38 @@ describe("event flow", () => {
       { timeout: 5_000 },
     );
     vi.unstubAllEnvs();
+  });
+
+  it("says so when the status read fails, instead of looking like a clean project", async () => {
+    vi.stubEnv("I18N_KIT_WIDGET_LINGER_MS", "5000");
+    const { fire, lines, pi } = harness(projectDir(), [
+      "!npm error code ETARGET\nNo matching version found for @the-i18n-kit/cli@8.3.0",
+    ]);
+
+    await fire("session_start", {});
+
+    await vi.waitFor(() => expect(lines.some((line) => line?.includes("status unavailable"))).toBe(true));
+    expect(lines.some((line) => line?.includes("ETARGET"))).toBe(true);
+    // one retry before giving up, since npx fails transiently
+    expect(pi.exec).toHaveBeenCalledTimes(2);
+    vi.unstubAllEnvs();
+  });
+
+  it("recovers silently when the retry succeeds", async () => {
+    const { fire, lines } = harness(projectDir(), ["!transient npm failure", JSON.stringify(ONE_KEY_SHORT_WIDE)]);
+    await fire("session_start", {});
+    await vi.waitFor(() => expect(lines[0]).toBe("🌐 26 keys missing · 26 locales"));
+    expect(lines.some((line) => line?.includes("unavailable"))).toBe(false);
+  });
+
+  it("asks the CLI about a directory explicitly, never implicitly", async () => {
+    const root = projectDir();
+    const { fire, pi } = harness(root, [JSON.stringify(COMPLETE)]);
+    await fire("session_start", {});
+    await vi.waitFor(() => expect(pi.exec).toHaveBeenCalled());
+    const [, args] = pi.exec.mock.calls[0];
+    expect(args).toContain("--projectDir");
+    expect(args).toContain(root);
   });
 
   it("narrates progress on the working row, and hands it back when the tool ends", async () => {

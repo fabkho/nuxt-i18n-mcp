@@ -159,6 +159,11 @@ function localePercent(locale: LocaleStatus): number {
   return formatPercent(locale.completion ?? 0);
 }
 
+/** Keep a diagnostic short enough to sit in one line of widget. */
+function truncateDetail(detail: string): string {
+  return detail.length > 60 ? `${detail.slice(0, 57)}…` : detail;
+}
+
 /** `1 key` / `26 keys`, so a line never reads "1 keys". */
 function count(n: number, noun: string): string {
   return `${n} ${noun}${n === 1 ? "" : "s"}`;
@@ -374,6 +379,7 @@ export default function i18nKitWidget(pi: ExtensionAPI): void {
   let refreshing = false;
   /** Missing keys as of the last successful read, for reporting what changed. */
   let lastMissing: number | undefined;
+  let reportedUnavailable = false;
   const placement = process.env.I18N_KIT_WIDGET_PLACEMENT === "aboveEditor" ? "aboveEditor" : "belowEditor";
 
   let state: WidgetState | undefined;
@@ -424,6 +430,20 @@ export default function i18nKitWidget(pi: ExtensionAPI): void {
     paint(ctx);
     const ratio = progress.total === undefined ? `${progress.done}` : `${progress.done}/${progress.total}`;
     ctx.ui.setWorkingMessage?.(`${progress.message} (${ratio})`);
+  };
+
+  /**
+   * A failed read must not look like a clean project.
+   *
+   * Hiding on error is indistinguishable from having nothing to report, which
+   * turns a broken CLI into a widget that is merely absent — and an absent
+   * widget is unreportable. Say it once per session, quietly.
+   */
+  const reportUnavailable = (ctx: ExtensionContext, stderr: string) => {
+    if (reportedUnavailable) return;
+    reportedUnavailable = true;
+    const detail = stderr.split("\n").find((line) => line.trim().length > 0)?.trim();
+    showTransient(ctx, `🌐 i18n status unavailable${detail ? ` · ${truncateDetail(detail)}` : ""}`, "outstanding");
   };
 
   /** Hand the working row back to pi once the work it described is over. */
@@ -487,17 +507,30 @@ export default function i18nKitWidget(pi: ExtensionAPI): void {
     if (outstanding) showTransient(ctx, outstanding, "outstanding");
   };
 
+  const runStatus = async (root: string) => {
+    const [command, prefix] = resolveCli(root);
+    // --projectDir rather than cwd: inside a workspace, npx can resolve the
+    // package differently depending on where it runs.
+    return pi.exec(command, [...prefix, "status", "--json", "--projectDir", root], {
+      cwd: root,
+      timeout: 60_000,
+    });
+  };
+
   const refresh = async (ctx: ExtensionContext, reason: Reason) => {
     if (!projectRoot || refreshing) return;
     refreshing = true;
     try {
-      const [command, prefix] = resolveCli(projectRoot);
-      const result = await pi.exec(command, [...prefix, "status", "--json"], {
-        cwd: projectRoot,
-        timeout: 60_000,
-      });
+      let result = await runStatus(projectRoot);
+      if (result.code !== 0) {
+        // npx fetches from the network and fails transiently (a stale packument
+        // is enough); one retry costs a second and saves a blank widget.
+        debug("status failed, retrying", { code: result.code, stderr: result.stderr.slice(0, 200) });
+        result = await runStatus(projectRoot);
+      }
       if (result.code !== 0) {
         debug("status failed", { code: result.code, stderr: result.stderr.slice(0, 200) });
+        reportUnavailable(ctx, result.stderr);
         return;
       }
       const parsed = JSON.parse(result.stdout) as StatusResult & { error?: unknown };
