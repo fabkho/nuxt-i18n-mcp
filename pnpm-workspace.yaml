@@ -1,5 +1,6 @@
 packages:
   - 'packages/*'
   - integrations/pi
+  - themes/pi
   - playground/nuxt
   - docs

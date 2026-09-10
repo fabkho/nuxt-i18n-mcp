@@ -26,6 +26,39 @@ const WIDGET_KEY = "the-i18n-kit";
 const STATUS_KEY = "i18n";
 
 /**
+ * The published status, readable in-process.
+ *
+ * Hosts keep statuses for their own chrome and do not hand them back, so a
+ * surface that wants to render coverage somewhere else — an editor border, say —
+ * has no way to ask. This is that way: last value plus a subscription, for
+ * anything in this repository that renders the same fact somewhere the host
+ * does not reach.
+ */
+let currentStatus: string | undefined;
+const statusListeners = new Set<(status: string | undefined) => void>();
+
+export function getI18nStatus(): string | undefined {
+  return currentStatus;
+}
+
+export function onI18nStatus(listener: (status: string | undefined) => void): () => void {
+  statusListeners.add(listener);
+  listener(currentStatus);
+  return () => statusListeners.delete(listener);
+}
+
+function announceStatus(status: string | undefined): void {
+  currentStatus = status;
+  for (const listener of statusListeners) {
+    try {
+      listener(status);
+    } catch {
+      // a broken listener must not take the widget with it
+    }
+  }
+}
+
+/**
  * Diagnostics for the one thing a widget cannot report about itself: why it did
  * not change. `I18N_KIT_WIDGET_DEBUG=<file>` appends every decision — events
  * seen, tools matched, what the CLI returned — so a session that shows a stale
@@ -573,7 +606,9 @@ export default function i18nKitWidget(pi: ExtensionAPI): void {
    */
   const publishStatus = (ctx: ExtensionContext, missing: number | undefined) => {
     if (process.env.I18N_KIT_STATUS === "off") return;
-    ctx.ui.setStatus?.(STATUS_KEY, formatStatus(missing));
+    const status = formatStatus(missing);
+    ctx.ui.setStatus?.(STATUS_KEY, status);
+    announceStatus(status);
   };
 
   /**
