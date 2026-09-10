@@ -6,7 +6,7 @@
 
 import { readdir } from 'node:fs/promises'
 
-import { detectI18nConfig, clearConfigCache } from '../config/detector.js'
+import { detectI18nConfig, clearConfigCacheFor } from '../config/detector.js'
 import { serializeLayerGraph } from '../config/layer-graph.js'
 import type { SerializedLayerGraph } from '../config/layer-graph.js'
 import type { I18nConfig, ProjectConfig } from '../config/types.js'
@@ -142,12 +142,16 @@ function withoutTranslationGuidance(projectConfig: ProjectConfig): TrimmedProjec
 }
 
 /**
- * Detect the i18n configuration from the project, always bypassing the
- * config cache (clears it first).
+ * Detect the i18n configuration from the project, always bypassing the config
+ * cache: this project's entry is forgotten first.
+ *
+ * Only this project's. A process that has resolved several — an MCP server
+ * across a session — keeps the rest, which re-detecting one project says
+ * nothing about.
  */
 export async function detectConfig(projectDir?: string): Promise<I18nConfig> {
   const dir = projectDir ?? process.cwd()
-  clearConfigCache()
+  clearConfigCacheFor(dir)
   return detectI18nConfig(dir)
 }
 

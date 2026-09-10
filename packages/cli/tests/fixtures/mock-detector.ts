@@ -25,14 +25,15 @@ export function registerFixtureConfig(projectDir: string, config: I18nConfig): v
 
 /**
  * Register a `vi.mock` for `../../src/config/detector.js` that replaces
- * `detectI18nConfig`, `clearConfigCache`, and `getCachedConfig` with
- * fixture-backed implementations.
+ * `detectI18nConfig`, `clearConfigCache`, `clearConfigCacheFor` and
+ * `getCachedConfig` with fixture-backed implementations.
  *
  * The mock maintains a single cached instance per `projectDir` so that
  * cache-identity semantics work correctly:
  * - Calling `detectI18nConfig(dir)` twice returns the **same** object.
  * - `getCachedConfig()` returns the most recently detected config.
  * - `clearConfigCache()` resets the cache to `null`.
+ * - `clearConfigCacheFor(dir)` forgets one project and leaves the rest.
  *
  * Must be called at the **top level** of the test file (before any imports
  * that depend on the mocked module), because `vi.mock` is hoisted by Vitest.
@@ -85,6 +86,12 @@ export function registerDetectorMock(): void {
       clearConfigCache: vi.fn(() => {
         cached = null
         instanceCache.clear()
+      }),
+      clearConfigCacheFor: vi.fn((projectDir: string) => {
+        const entry = instanceCache.get(projectDir)
+        if (!entry) return
+        instanceCache.delete(projectDir)
+        if (cached === entry) cached = null
       }),
       getCachedConfig: vi.fn(() => cached),
     }

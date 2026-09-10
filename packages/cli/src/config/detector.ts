@@ -17,7 +17,7 @@ export { discoverNuxtApps } from '../adapters/nuxt/discovery'
 // The cache itself lives in ./cache, which owns every memo that has to be
 // forgotten together. Re-exported here because this has been its import path
 // since before there was more than one thing to clear.
-export { clearConfigCache, getCachedConfig } from './cache'
+export { clearConfigCache, clearConfigCacheFor, getCachedConfig } from './cache'
 
 registerAdapter(new NuxtAdapter())
 registerAdapter(new LaravelAdapter())
