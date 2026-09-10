@@ -229,8 +229,13 @@ describe("the status channel", () => {
      * kept in module scope would not survive it, and the editor border that
      * reads this would show nothing — which is precisely what it did.
      */
-    const first = await import("./extension.ts?copy=1");
-    const second = await import("./extension.ts?copy=2");
+    type Module = typeof import("./extension.ts");
+    // The query suffix is what defeats the cache; TypeScript cannot resolve a
+    // specifier it does not recognise, and the runtime is the point here.
+    // @ts-expect-error -- deliberate cache-busting specifier
+    const first: Module = await import("./extension.ts?copy=1");
+    // @ts-expect-error -- deliberate cache-busting specifier
+    const second: Module = await import("./extension.ts?copy=2");
     expect(first).not.toBe(second);
 
     const { fire, statuses } = harness(projectDir(), [JSON.stringify(ONE_KEY_SHORT_WIDE)]);
@@ -309,7 +314,6 @@ function harness(cwd: string, statusResults: string[], tagColors = false) {
       setWidget: (
         _key: string,
         content?: string[] | ((tui: never, theme: never) => { render: (width: number) => string[]; dispose?: () => void }),
-        _options?: unknown,
       ) => {
         if (content === undefined) {
           component?.dispose?.();
@@ -561,7 +565,8 @@ describe("event flow", () => {
     const { fire, pi } = harness(root, [JSON.stringify(COMPLETE)]);
     await fire("session_start", {});
     await vi.waitFor(() => expect(pi.exec).toHaveBeenCalled());
-    const [, args] = pi.exec.mock.calls[0];
+    // Typed here rather than on the mock, which takes no declared parameters.
+    const [, args = []] = (pi.exec.mock.calls[0] ?? []) as unknown as [string, string[]];
     expect(args).toContain("--projectDir");
     expect(args).toContain(root);
   });

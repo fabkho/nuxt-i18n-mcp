@@ -3,10 +3,10 @@
   "type": "module",
   "scripts": {
     "build": "pnpm -r --filter='./packages/*' build",
-    "test": "pnpm -r --filter='./packages/*' test && pnpm --filter @the-i18n-kit/docs test",
-    "lint": "eslint packages/*/src/ docs/generate/ docs/tests/",
+    "test": "pnpm -r --filter='./packages/*' --filter='./integrations/*' --filter='./themes/*' test && pnpm --filter @the-i18n-kit/docs test",
+    "lint": "eslint packages/*/src/ integrations/*/*.ts themes/*/*.ts docs/generate/ docs/tests/",
     "generate:schema": "node scripts/generate-schema.mjs",
-    "typecheck": "pnpm --filter @the-i18n-kit/cli build && pnpm -r --filter='./packages/*' typecheck && pnpm --filter @the-i18n-kit/docs typecheck",
+    "typecheck": "pnpm --filter @the-i18n-kit/cli build && pnpm -r --filter='./packages/*' --filter='./integrations/*' --filter='./themes/*' typecheck && pnpm --filter @the-i18n-kit/docs typecheck",
     "docs:generate": "pnpm --filter @the-i18n-kit/docs generate:reference"
   },
   "devDependencies": {
