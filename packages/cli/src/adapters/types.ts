@@ -1,6 +1,9 @@
 import type { I18nConfig, ProjectConfig } from '../config/types'
+import type { LocaleFileFormat } from '../io/formats'
 
-export type LocaleFileFormat = 'json' | 'php-array' | 'yaml'
+// The format is IO's concept; an adapter only names which one a project uses.
+// Re-exported so an adapter keeps declaring it from the module it implements.
+export type { LocaleFileFormat } from '../io/formats'
 
 export interface FrameworkAdapter {
   readonly name: string

@@ -5,7 +5,7 @@
  */
 
 import type { I18nConfig, LocaleDefinition, ProjectConfig } from '../../config/types.js'
-import type { LocaleFileFormat } from '../../adapters/types.js'
+import type { LocaleFileFormat } from '../../io/formats.js'
 import { log } from '../../utils/logger.js'
 import { localeMapKeys } from '../shared.js'
 

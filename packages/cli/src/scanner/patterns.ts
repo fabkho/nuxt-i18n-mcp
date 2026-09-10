@@ -1,4 +1,4 @@
-import type { LocaleFileFormat } from '../adapters/types.js'
+import type { LocaleFileFormat } from '../io/formats.js'
 
 // ─── Types ──────────────────────────────────────────────────────
 

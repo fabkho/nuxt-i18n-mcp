@@ -12,7 +12,6 @@
 
 import { readdir } from 'node:fs/promises'
 import { extname, join } from 'node:path'
-import type { LocaleFileFormat } from '../adapters/types.js'
 import { ConfigError, FileIOError, toErrorMessage } from '../utils/errors.js'
 import { log } from '../utils/logger.js'
 
@@ -22,6 +21,13 @@ import { readPhpLocaleFile, clearPhpFileCache, clearPhpFileCacheEntry } from './
 import { writePhpLocaleFile, mutatePhpLocaleFile } from './php-writer.js'
 import { readYamlLocaleFile, clearYamlFileCache, clearYamlFileCacheEntry } from './yaml-reader.js'
 import { writeYamlLocaleFile, mutateYamlLocaleFile } from './yaml-writer.js'
+
+/**
+ * The locale file formats this registry can read and write. An adapter names
+ * one, a project config may override it, and the scanner picks its pattern set
+ * from it — but what the id means is the registry entry below.
+ */
+export type LocaleFileFormat = 'json' | 'php-array' | 'yaml'
 
 /**
  * Write options every format understands. Per-format style (indentation,
