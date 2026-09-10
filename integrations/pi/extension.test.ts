@@ -16,6 +16,7 @@ import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import extension, {
   formatCoverage,
+  formatStatus,
   formatOutstanding,
   formatProgress,
   formatTranslateReport,
@@ -215,6 +216,17 @@ describe("formatUndefinedKeys", () => {
   });
 });
 
+describe("formatStatus", () => {
+  it("states coverage in as few cells as a footer can spare", () => {
+    expect(formatStatus(4)).toBe("🌐 4 missing");
+    expect(formatStatus(0)).toBe("🌐 ✓");
+  });
+
+  it("admits when the number is unknown", () => {
+    expect(formatStatus(undefined)).toBe("🌐 ?");
+  });
+});
+
 describe("formatProgress", () => {
   it("renders a message with its ratio", () => {
     expect(formatProgress({ progress: 3, total: 6, message: "es-ES: batch 1/1" })).toBe("🌐 es-ES: batch 1/1 (3/6)");
@@ -286,6 +298,7 @@ function harness(cwd: string, statusResults: string[], tagColors = false) {
         lines.push(content[0]);
       },
       setWorkingMessage: vi.fn(),
+      setStatus: vi.fn(),
       notify: vi.fn(),
     },
   };
@@ -301,6 +314,7 @@ function harness(cwd: string, statusResults: string[], tagColors = false) {
     },
     command: async () => commandHandler?.("", ctx),
     workingMessages: ctx.ui.setWorkingMessage,
+    statuses: ctx.ui.setStatus,
     renders,
   };
 }
@@ -578,6 +592,50 @@ describe("event flow", () => {
 
     await new Promise((resolve) => setTimeout(resolve, 200));
     expect(pi.exec).toHaveBeenCalledTimes(1);
+  });
+
+  it("publishes coverage as a status, even when the widget stays silent", async () => {
+    const { fire, lines, statuses } = harness(projectDir(), [JSON.stringify(COMPLETE)]);
+    await fire("session_start", {});
+
+    // Nothing missing: no widget line, but the footer still knows.
+    await vi.waitFor(() => expect(statuses).toHaveBeenCalledWith("i18n", "🌐 ✓"));
+    expect(lines).toEqual([undefined]);
+  });
+
+  it("keeps the status current as work is resolved", async () => {
+    vi.stubEnv("I18N_KIT_WIDGET_LINGER_MS", "300");
+    const { fire, statuses } = harness(projectDir(), [
+      JSON.stringify(ONE_KEY_SHORT_WIDE),
+      JSON.stringify(COMPLETE),
+    ]);
+    await fire("session_start", {});
+    await vi.waitFor(() => expect(statuses).toHaveBeenCalledWith("i18n", "🌐 26 missing"));
+
+    await fire("tool_execution_end", {
+      toolName: "mcp",
+      isError: false,
+      result: { content: [], details: { mode: "call", server: "the-i18n-mcp", tool: "translate_missing" } },
+    });
+
+    await vi.waitFor(() => expect(statuses).toHaveBeenLastCalledWith("i18n", "🌐 ✓"), { timeout: 5_000 });
+    vi.unstubAllEnvs();
+  });
+
+  it("stops asserting a number it could not read", async () => {
+    const { fire, statuses } = harness(projectDir(), ["!npm error code ETARGET"]);
+    await fire("session_start", {});
+    await vi.waitFor(() => expect(statuses).toHaveBeenCalledWith("i18n", "🌐 ?"));
+  });
+
+  it("publishes nothing when statuses are turned off", async () => {
+    vi.stubEnv("I18N_KIT_STATUS", "off");
+    const { fire, statuses, pi } = harness(projectDir(), [JSON.stringify(COMPLETE)]);
+    await fire("session_start", {});
+    await vi.waitFor(() => expect(pi.exec).toHaveBeenCalled());
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    expect(statuses).not.toHaveBeenCalled();
+    vi.unstubAllEnvs();
   });
 
   it("narrates progress on the working row, and hands it back when the tool ends", async () => {

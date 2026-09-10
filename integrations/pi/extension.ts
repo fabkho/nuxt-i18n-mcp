@@ -22,6 +22,8 @@ import type { Component, TUI } from "@earendil-works/pi-tui";
 import { truncateToWidth } from "@earendil-works/pi-tui";
 
 const WIDGET_KEY = "the-i18n-kit";
+/** Short, because a footer key is a footer segment in most hosts. */
+const STATUS_KEY = "i18n";
 
 /**
  * Diagnostics for the one thing a widget cannot report about itself: why it did
@@ -270,6 +272,19 @@ export function formatTranslateReport(report: TranslateReport, stillMissing: num
   if (stillMissing > 0) parts.push(`${stillMissing} still missing`);
   if (parts.length === 0) return undefined;
   return `🌐 ${parts.join(" · ")}`;
+}
+
+/**
+ * The footer form: coverage as a standing fact, in as few cells as possible.
+ *
+ * This is the half of the story the widget deliberately refuses to tell. A
+ * transient line is right for change and wrong for state, and a footer is the
+ * opposite: it costs nothing to keep, and it is read when someone wonders,
+ * rather than announcing itself. Hosts without a footer ignore it.
+ */
+export function formatStatus(missing: number | undefined): string {
+  if (missing === undefined) return "🌐 ?";
+  return missing > 0 ? `🌐 ${missing} missing` : "🌐 ✓";
 }
 
 /** `🌐 2 undefined keys · checkout.payNow, cart.empty` */
@@ -553,6 +568,15 @@ export default function i18nKitWidget(pi: ExtensionAPI): void {
   };
 
   /**
+   * Publish coverage to whatever the host does with statuses — pi's own footer,
+   * a themed one, or nothing at all. Off with I18N_KIT_STATUS=off.
+   */
+  const publishStatus = (ctx: ExtensionContext, missing: number | undefined) => {
+    if (process.env.I18N_KIT_STATUS === "off") return;
+    ctx.ui.setStatus?.(STATUS_KEY, formatStatus(missing));
+  };
+
+  /**
    * A failed read must not look like a clean project.
    *
    * Hiding on error is indistinguishable from having nothing to report, which
@@ -562,6 +586,8 @@ export default function i18nKitWidget(pi: ExtensionAPI): void {
   const reportUnavailable = (ctx: ExtensionContext, stderr: string) => {
     if (reportedUnavailable) return;
     reportedUnavailable = true;
+    // The footer must not keep asserting a number nobody could verify.
+    publishStatus(ctx, undefined);
     const detail = stderr.split("\n").find((line) => line.trim().length > 0)?.trim();
     showTransient(ctx, `🌐 i18n status unavailable${detail ? ` · ${truncateDetail(detail)}` : ""}`, "outstanding");
   };
@@ -596,6 +622,7 @@ export default function i18nKitWidget(pi: ExtensionAPI): void {
     const missing = status.summary?.missingKeys ?? 0;
     const previous = lastMissing;
     lastMissing = missing;
+    publishStatus(ctx, missing);
 
     if (reason === "command") {
       const line = formatCoverage(status);

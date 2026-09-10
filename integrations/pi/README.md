@@ -48,6 +48,21 @@ Live progress needs a pi-mcp-adapter that bridges MCP progress notifications to
 tool updates. Without it the coverage line still works; only the progress line
 stays quiet.
 
+## In the footer
+
+Alongside the widget, coverage is published as a host status under the key
+`i18n`:
+
+```
+🌐 4 missing        🌐 ✓        🌐 ?
+```
+
+This is the standing fact the widget refuses to keep on screen — a transient
+line is right for change and wrong for state, and a footer is the reverse: it
+costs nothing to keep and is read when someone wonders. Hosts that render
+statuses (pi's own footer, or a themed one) pick it up; hosts that do not ignore
+it. `I18N_KIT_STATUS=off` disables it.
+
 ## Configuration
 
 | Variable | Effect |
@@ -57,6 +72,7 @@ stays quiet.
 | `I18N_KIT_WIDGET_DEBOUNCE_MS` | Delay before refreshing after a tool writes (default: 1500) |
 | `I18N_KIT_WIDGET_DEBUG=<file>` | Append every decision the widget makes to a file |
 | `I18N_KIT_WIDGET_STYLE=plain` | No colour, no spinner, plain text — for terminals that want none of it |
+| `I18N_KIT_STATUS=off` | Stop publishing the footer status |
 
 The extension prefers a project-local `the-i18n-cli`, then a global install,
 then `npx @the-i18n-kit/cli@latest`.
