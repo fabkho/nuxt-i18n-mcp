@@ -8,14 +8,10 @@ import type { TranslationBackend } from './backend.js'
 import { registerPrompts } from './prompts.js'
 import { registerResources } from './resources.js'
 import { registerTools } from './tools.js'
+import { ProjectScope } from './scope.js'
 
 const require = createRequire(import.meta.url)
 const { version } = require('../package.json') as { version: string }
-
-// Every tool, resource, and prompt handler must default projectDir to this —
-// falling through to core's own process.cwd() default would ignore
-// I18N_PROJECT_DIR (the documented env contract).
-const DEFAULT_PROJECT_DIR = process.env.I18N_PROJECT_DIR ?? process.cwd()
 
 // SEP-2549 cache hints for the cacheable 2026-07-28 results.
 const STATIC_SURFACE_CACHE: CacheHint = { ttlMs: 3_600_000, cacheScope: 'private' }
@@ -40,9 +36,13 @@ export interface CreateServerOptions {
  * something the project itself cannot know.
  */
 export async function createServer(options: CreateServerOptions = {}): Promise<McpServer> {
+  // Per connection, not per process: what a scope resolves belongs to the
+  // connection it serves, not to a module loaded once.
+  const scope = new ProjectScope()
+
   const backend: TranslationBackend = options.translateFn
     ? { mode: 'provider', translateFn: options.translateFn }
-    : await resolveTranslationBackend(DEFAULT_PROJECT_DIR)
+    : await resolveTranslationBackend(scope.startupDir)
 
   const server = new McpServer(
     {
@@ -66,7 +66,7 @@ export async function createServer(options: CreateServerOptions = {}): Promise<M
   )
 
   registerTools(server, descriptors, {
-    defaultProjectDir: DEFAULT_PROJECT_DIR,
+    scope,
     translateFn: backend.translateFn,
     decorate: {
       /**
@@ -84,8 +84,9 @@ export async function createServer(options: CreateServerOptions = {}): Promise<M
     },
   })
 
-  registerResources(server, DEFAULT_PROJECT_DIR)
-  registerPrompts(server, DEFAULT_PROJECT_DIR)
+  registerResources(server, scope)
+  registerPrompts(server, scope)
 
   return server
 }
+

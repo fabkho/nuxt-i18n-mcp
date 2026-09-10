@@ -13,10 +13,11 @@ import { z } from 'zod'
 import { assertReportPaths, divertToReport, outputSchema, ToolError, toErrorMessage } from '@the-i18n-kit/cli'
 import type { AnyOperationDescriptor, ParamSpec, ProgressFn, TranslateFn } from '@the-i18n-kit/cli'
 import type { McpServer, ServerContext } from '@modelcontextprotocol/server'
+import type { ProjectScope } from './scope.js'
 
 export interface ToolContext {
-  /** Where an operation runs when the caller names no project directory. */
-  defaultProjectDir: string
+  /** Resolves and confines the directory an operation runs in. */
+  scope: ProjectScope
   /** The startup-resolved backend, absent in agent mode. */
   translateFn?: TranslateFn
   /**
@@ -61,7 +62,7 @@ export function toolErrorResponse(tool: string, error: unknown) {
 const projectDirSchema = z
   .string()
   .optional()
-  .describe('Absolute path to the project root. Defaults to I18N_PROJECT_DIR, then server cwd. Example: "/home/user/my-app".')
+  .describe('Absolute path to the project root. Defaults to I18N_PROJECT_DIR, then server cwd. When the server has a root, a path outside it is refused. Example: "/home/user/my-app".')
 
 /** Register every descriptor the server advertises as a tool. */
 export function registerTools(
@@ -108,7 +109,7 @@ export function registerFromDescriptor(
         const { projectDir, ...rest } = args
         const operationArgs = {
           ...rest,
-          projectDir: (projectDir as string | undefined) ?? ctx.defaultProjectDir,
+          projectDir: ctx.scope.projectDirFor(projectDir as string | undefined),
         }
         await assertReportPaths(descriptor, operationArgs)
         const result = await descriptor.run(

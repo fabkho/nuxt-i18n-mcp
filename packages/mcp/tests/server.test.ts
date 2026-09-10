@@ -1,11 +1,11 @@
 import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest'
 import { join } from 'node:path'
-import { mkdtemp, rm, mkdir, writeFile, readFile } from 'node:fs/promises'
+import { mkdtemp, rm, mkdir, symlink, writeFile, readFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { createMcpHandler, InMemoryTransport } from '@modelcontextprotocol/server'
 import type { McpHttpHandler, McpServer } from '@modelcontextprotocol/server'
 import { Client, StreamableHTTPClientTransport } from '@modelcontextprotocol/client'
-import { clearConfigCache, descriptors, outputSchema } from '@the-i18n-kit/cli'
+import { canonicalPath, clearConfigCache, descriptors, outputSchema } from '@the-i18n-kit/cli'
 import type { TranslateFn } from '@the-i18n-kit/cli'
 
 /**
@@ -24,8 +24,25 @@ import type { TranslateFn } from '@the-i18n-kit/cli'
 let projectDir: string
 let client: Client
 
-async function makeProject(extraConfig: Record<string, unknown> = {}): Promise<string> {
-  const dir = await mkdtemp(join(tmpdir(), 'i18n-mcp-test-'))
+/**
+ * The confinement root the default client is served under. Once it is set,
+ * every further fixture is created inside it: the server refuses a projectDir
+ * outside its root, so a sibling temp directory would be refused rather than
+ * exercised.
+ *
+ * Nested projects are dot-directories because the scanner globs with
+ * `dot: false` — one case's source files are invisible to a scan of the root
+ * project, which is what keeps the fixtures independent despite the nesting.
+ */
+let caseRoot: string | undefined
+
+async function makeProject(
+  extraConfig: Record<string, unknown> = {},
+  parent = caseRoot,
+): Promise<string> {
+  const dir = parent === undefined
+    ? await mkdtemp(join(tmpdir(), 'i18n-mcp-test-'))
+    : await mkdtemp(join(parent, '.case-'))
   const localesDir = join(dir, 'i18n', 'locales')
   await mkdir(localesDir, { recursive: true })
   await writeFile(join(dir, '.i18n-mcp.json'), JSON.stringify({
@@ -99,6 +116,7 @@ const fakeTranslateFn: TranslateFn = async ({ userMessage }) => {
 
 beforeAll(async () => {
   projectDir = await makeProject()
+  caseRoot = projectDir
 
   // Guard against provider config leaking in from the host environment —
   // this file's default client must run in agent mode.
@@ -563,7 +581,7 @@ describe('the-i18n-mcp server over in-memory transport', () => {
   // #342): discover names the shared layer, this moves the key into it. Needs
   // two layers, which the shared single-layer fixture does not have.
   it('move_translation_key promotes a key between layers', async () => {
-    const twoLayer = await mkdtemp(join(tmpdir(), 'i18n-mcp-move-'))
+    const twoLayer = await mkdtemp(join(projectDir, '.case-move-'))
     try {
       for (const [dir, data] of [
         ['app-admin/i18n/locales', { admin: { dashboard: { title: 'Übersicht' } } }],
@@ -697,6 +715,104 @@ describe('the-i18n-mcp server over in-memory transport', () => {
 
     expect(result.isError).toBe(true)
     expect(text).toContain('no-such-layer')
+  })
+
+})
+
+/**
+ * The threat: a tool takes an absolute projectDir from an agent that may be
+ * repeating a path it read out of the project, so without a boundary a
+ * write tool can be aimed anywhere the server process can write.
+ */
+describe('projectDir confined to the configured root', () => {
+  it('accepts a project directory inside the configured root', async () => {
+    const inside = await makeProject()
+    try {
+      const { result, json } = await callTool('discover', { projectDir: inside })
+
+      expect(result.isError).toBeFalsy()
+      expect(json?.defaultLocale).toBe('de')
+    } finally {
+      await rm(inside, { recursive: true, force: true })
+    }
+  })
+
+  it('accepts the configured root itself', async () => {
+    const { result, json } = await callTool('discover', { projectDir })
+
+    expect(result.isError).toBeFalsy()
+    expect(json?.defaultLocale).toBe('de')
+  })
+
+  it('refuses a write aimed at a project directory outside the configured root', async () => {
+    const outside = await makeProject({}, tmpdir())
+    const localeFile = join(outside, 'i18n', 'locales', 'de.json')
+    try {
+      const before = await readFile(localeFile, 'utf-8')
+      const { result, text } = await callTool('write_translations', {
+        projectDir: outside,
+        layer: 'root',
+        translations: { 'injected.key': { de: 'darf nie geschrieben werden' } },
+      })
+
+      expect(result.isError).toBe(true)
+      expect(text).toContain('[PROJECT_DIR_OUTSIDE_ROOT]')
+      // Both paths, so the caller can see which boundary it hit.
+      expect(text).toContain(outside)
+      expect(text).toContain(canonicalPath(projectDir))
+      expect(await readFile(localeFile, 'utf-8')).toBe(before)
+    } finally {
+      await rm(outside, { recursive: true, force: true })
+    }
+  })
+
+  it('refuses a symlink inside the root that resolves outside it', async () => {
+    const outside = await makeProject({}, tmpdir())
+    const link = join(projectDir, '.link-outside')
+    await symlink(outside, link, 'dir')
+    try {
+      const { result, text } = await callTool('discover', { projectDir: link })
+
+      expect(result.isError).toBe(true)
+      expect(text).toContain('[PROJECT_DIR_OUTSIDE_ROOT]')
+      expect(text).toContain(canonicalPath(outside))
+    } finally {
+      await rm(link, { force: true })
+      await rm(outside, { recursive: true, force: true })
+    }
+  })
+})
+
+describe('a server with no configured root', () => {
+  let unconfinedClient: Client
+  let arbitraryDir: string
+
+  beforeAll(async () => {
+    arbitraryDir = await makeProject({}, tmpdir())
+
+    const saved = process.env.I18N_PROJECT_DIR
+    delete process.env.I18N_PROJECT_DIR
+    try {
+      const { createServer } = await import('../src/server.js')
+      unconfinedClient = await connectClient(await createServer())
+    } finally {
+      if (saved === undefined) delete process.env.I18N_PROJECT_DIR
+      else process.env.I18N_PROJECT_DIR = saved
+    }
+  })
+
+  afterAll(async () => {
+    await unconfinedClient.close()
+    await rm(arbitraryDir, { recursive: true, force: true })
+  })
+
+  // Confinement is opt-in: `npx` on a developer's machine, with no env var,
+  // must keep working exactly as before.
+  it('accepts any project directory when the environment names no root', async () => {
+    const { result, json } = await callToolOn(unconfinedClient, 'discover', { projectDir: arbitraryDir })
+
+    expect(result.isError).toBeFalsy()
+    expect(json?.defaultLocale).toBe('de')
   })
 })
 

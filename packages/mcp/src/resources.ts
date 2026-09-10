@@ -14,13 +14,14 @@ import {
   getCachedConfig,
   readLocaleData,
 } from '@the-i18n-kit/cli'
+import type { ProjectScope } from './scope.js'
 
-export function registerResources(server: McpServer, defaultProjectDir: string): void {
+export function registerResources(server: McpServer, scope: ProjectScope): void {
   server.registerResource(
     'locale-file',
     new ResourceTemplate('i18n:///{layer}/{locale}', {
       list: async () => {
-        const config = getCachedConfig() ?? await detectI18nConfig(defaultProjectDir).catch(() => null)
+        const config = getCachedConfig() ?? await detectI18nConfig(scope.projectDirFor(undefined)).catch(() => null)
         if (!config) {
           return { resources: [] }
         }
@@ -51,7 +52,7 @@ export function registerResources(server: McpServer, defaultProjectDir: string):
       mimeType: 'application/json',
     },
     async (uri, { layer, locale }) => {
-      const config = getCachedConfig() ?? await detectI18nConfig(defaultProjectDir)
+      const config = getCachedConfig() ?? await detectI18nConfig(scope.projectDirFor(undefined))
       const localeDef = findLocaleImpl(config, locale as string)
       if (!localeDef) {
         throw new Error(`Locale not found: ${locale}`)
