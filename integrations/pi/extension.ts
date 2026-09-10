@@ -90,6 +90,15 @@ export function formatProgress(progress: Record<string, unknown>): string {
 }
 
 /**
+ * Coverage rounded down, never up: in a large project one missing key out of a
+ * quarter million rounds to 100%, and a widget claiming 100% next to a missing
+ * count is a widget nobody believes. Only exactly 100 prints as 100.
+ */
+function formatPercent(value: number): number {
+  return value >= 100 ? 100 : Math.floor(value);
+}
+
+/**
  * `🌐 83% · es 75% · fr 92% · 4 missing`, worst locales first so a project with
  * twenty locales still says something useful in one line. Protected locales are
  * hand-maintained and excluded from the overall figure, so they are not listed.
@@ -108,9 +117,9 @@ export function formatCoverage(status: StatusResult): string | undefined {
     .sort((a, b) => (a.completion ?? 100) - (b.completion ?? 100));
 
   const parts: string[] = [];
-  if (overall !== undefined) parts.push(`${Math.round(overall)}%`);
+  if (overall !== undefined) parts.push(`${formatPercent(overall)}%`);
   for (const locale of incomplete.slice(0, MAX_LISTED_LOCALES)) {
-    parts.push(`${locale.code} ${Math.round(locale.completion ?? 0)}%`);
+    parts.push(`${locale.code} ${formatPercent(locale.completion ?? 0)}%`);
   }
   const rest = incomplete.length - MAX_LISTED_LOCALES;
   if (rest > 0) parts.push(`+${rest} more`);
