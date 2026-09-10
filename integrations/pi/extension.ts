@@ -26,30 +26,46 @@ const WIDGET_KEY = "the-i18n-kit";
 const STATUS_KEY = "i18n";
 
 /**
- * The published status, readable in-process.
+ * The published status, readable by anything else running in this process.
  *
  * Hosts keep statuses for their own chrome and do not hand them back, so a
- * surface that wants to render coverage somewhere else — an editor border, say —
- * has no way to ask. This is that way: last value plus a subscription, for
- * anything in this repository that renders the same fact somewhere the host
- * does not reach.
+ * surface rendering coverage somewhere the host does not reach — an editor
+ * border, say — has no way to ask for it.
+ *
+ * The channel is a global rather than this module's scope on purpose: pi loads
+ * every extension through its own jiti instance with the module cache off, so
+ * importing this file from another extension evaluates a second copy of it.
+ * Module-level state would be per-copy, and a reader would see a value that is
+ * never set. A key in the global symbol registry is shared even when the code
+ * around it is not.
  */
-let currentStatus: string | undefined;
-const statusListeners = new Set<(status: string | undefined) => void>();
+const STATUS_CHANNEL = Symbol.for("the-i18n-kit.pi.status");
+
+interface StatusChannel {
+  value?: string;
+  listeners: Set<(status: string | undefined) => void>;
+}
+
+function statusChannel(): StatusChannel {
+  const container = globalThis as { [STATUS_CHANNEL]?: StatusChannel };
+  return (container[STATUS_CHANNEL] ??= { listeners: new Set() });
+}
 
 export function getI18nStatus(): string | undefined {
-  return currentStatus;
+  return statusChannel().value;
 }
 
 export function onI18nStatus(listener: (status: string | undefined) => void): () => void {
-  statusListeners.add(listener);
-  listener(currentStatus);
-  return () => statusListeners.delete(listener);
+  const channel = statusChannel();
+  channel.listeners.add(listener);
+  listener(channel.value);
+  return () => channel.listeners.delete(listener);
 }
 
 function announceStatus(status: string | undefined): void {
-  currentStatus = status;
-  for (const listener of statusListeners) {
+  const channel = statusChannel();
+  channel.value = status;
+  for (const listener of channel.listeners) {
     try {
       listener(status);
     } catch {

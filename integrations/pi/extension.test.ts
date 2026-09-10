@@ -216,6 +216,29 @@ describe("formatUndefinedKeys", () => {
   });
 });
 
+describe("the status channel", () => {
+  it("is shared between separate copies of this module", async () => {
+    /*
+     * pi loads every extension through its own jiti instance with the module
+     * cache disabled, so an extension importing this file gets a second copy of
+     * it. Two imports with different query strings reproduce that here: state
+     * kept in module scope would not survive it, and the editor border that
+     * reads this would show nothing — which is precisely what it did.
+     */
+    const first = await import("./extension.ts?copy=1");
+    const second = await import("./extension.ts?copy=2");
+    expect(first).not.toBe(second);
+
+    const { fire, statuses } = harness(projectDir(), [JSON.stringify(ONE_KEY_SHORT_WIDE)]);
+    await fire("session_start", {});
+    await vi.waitFor(() => expect(statuses).toHaveBeenCalledWith("i18n", "🌐 26 missing"));
+
+    // Whichever copy publishes, every copy can read.
+    expect(first.getI18nStatus()).toBe("🌐 26 missing");
+    expect(second.getI18nStatus()).toBe("🌐 26 missing");
+  });
+});
+
 describe("formatStatus", () => {
   it("states coverage in as few cells as a footer can spare", () => {
     expect(formatStatus(4)).toBe("🌐 4 missing");

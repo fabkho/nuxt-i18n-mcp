@@ -27,7 +27,19 @@ import type { EditorComponent } from "@earendil-works/pi-tui";
  * follows the contract wherever it goes.
  */
 type EditorFactory = NonNullable<ReturnType<NonNullable<ExtensionContext["ui"]["getEditorComponent"]>>>;
+import { appendFileSync } from "node:fs";
 import { getI18nStatus } from "../../integrations/pi/extension.ts";
+
+/** Same switch as the widget's, so one run explains both halves. */
+function debug(message: string, data?: unknown): void {
+  const file = process.env.I18N_KIT_WIDGET_DEBUG;
+  if (!file) return;
+  try {
+    appendFileSync(file, `${new Date().toISOString()} [border] ${message} ${JSON.stringify(data ?? null)}\n`);
+  } catch {
+    // diagnostics never break the session
+  }
+}
 import { injectIntoBorder, isBottomBorder } from "./border.ts";
 
 /**
@@ -43,7 +55,10 @@ function withBorderLabel(inner: EditorComponent, label: () => string | undefined
   wrapper.render = (width: number): string[] => {
     const lines = inner.render(width);
     const text = label();
-    if (!text) return lines;
+    if (!text) {
+      debug("render: no status to show");
+      return lines;
+    }
 
     // Last border line, so a frame with autocomplete rows below the input is
     // still labelled on its own edge rather than in the middle of the list.
@@ -94,9 +109,17 @@ export default function i18nKitTheme(pi: ExtensionAPI): void {
   };
 
   pi.on("session_start", (_event, ctx: ExtensionContext) => {
+    debug("session_start", {
+      hasUI: ctx.hasUI,
+      hasFactory: Boolean(ctx.ui.getEditorComponent?.()),
+      status: getI18nStatus(),
+    });
     if (!ctx.hasUI) return;
     if (process.env.I18N_KIT_BORDER === "off") return;
-    if (ensureWrapped(ctx)) return;
+    if (ensureWrapped(ctx)) {
+      debug("wrapped at session_start");
+      return;
+    }
 
     /*
      * The editor this wraps is installed by another extension, in its own
@@ -106,7 +129,15 @@ export default function i18nKitTheme(pi: ExtensionAPI): void {
      */
     const deadline = Date.now() + WRAP_TIMEOUT_MS;
     const timer = setInterval(() => {
-      if (ensureWrapped(ctx) || Date.now() > deadline) clearInterval(timer);
+      if (ensureWrapped(ctx)) {
+        debug("wrapped after waiting");
+        clearInterval(timer);
+        return;
+      }
+      if (Date.now() > deadline) {
+        debug("gave up waiting for an editor to wrap");
+        clearInterval(timer);
+      }
     }, WRAP_RETRY_MS);
     timer.unref?.();
   });
