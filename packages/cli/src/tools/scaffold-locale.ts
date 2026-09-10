@@ -6,6 +6,7 @@ import { readLocaleData, resolveLocaleEntries } from '../io/locale-data'
 import { readLocale, writeLocale } from '../io/locale-io'
 import { getFormat } from '../io/formats'
 import { getLeafKeys } from '../io/key-operations'
+import { nonAliasLayers } from '../core/shared'
 import { ToolError } from '../utils/errors'
 
 export interface ScaffoldLocaleOptions {
@@ -41,7 +42,7 @@ export async function scaffoldLocale(
 
   const layers = layerFilter
     ? config.localeDirs.filter(d => d.layer === layerFilter)
-    : config.localeDirs.filter(d => !d.aliasOf)
+    : nonAliasLayers(config)
 
   if (layerFilter && layers.length === 0) {
     throw new ToolError(

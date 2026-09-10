@@ -19,7 +19,7 @@ import { ToolError } from '../utils/errors.js'
 
 import { log } from '../utils/logger.js'
 
-import { findLayerOrThrow, resolveReferenceLocale } from './shared.js'
+import { resolveLayersToScan, resolveReferenceLocale } from './shared.js'
 
 // ─── Refs the three scans share ──────────────────────────────────
 
@@ -490,18 +490,11 @@ async function resolveOrphanScanContext(
 }> {
   const { localeCode, localeDef } = resolveReferenceLocale(config, opts.locale)
 
-  const layersToCheck = opts.layer
-    ? config.localeDirs.filter(d => d.layer === opts.layer)
-    : config.localeDirs.filter(d => !d.aliasOf)
+  const layersToCheck = resolveLayersToScan(config, opts.layer)
 
-  if (layersToCheck.length === 0) {
-    if (opts.layer) {
-      findLayerOrThrow(config, opts.layer)
-    }
-    throw new ToolError('No locale directories found.', 'LAYER_NOT_FOUND')
-  }
-
-  if (opts.layer && layersToCheck[0]?.aliasOf) {
+  // Only a named layer can be an alias here: the every-layer selection has
+  // already dropped them.
+  if (layersToCheck[0]?.aliasOf) {
     throw new ToolError(
       `Layer "${opts.layer}" is an alias of "${layersToCheck[0].aliasOf}". Use the target layer instead.`,
       'LAYER_IS_ALIAS',

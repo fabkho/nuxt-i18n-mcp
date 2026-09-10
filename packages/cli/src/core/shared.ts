@@ -53,21 +53,41 @@ export function findReferenceLocaleOrThrow(config: I18nConfig, requested?: strin
 }
 
 /**
+ * The layer spelling every scan accepts for "do not narrow this": the same
+ * thing as omitting the parameter. A write target is resolved by
+ * {@link findWritableLayerOrThrow} instead, where it stays an unknown layer
+ * name — a mutation has one destination.
+ */
+export const ALL_LAYERS = '*'
+
+/**
+ * Every layer that owns its files. Alias layers point at another layer's
+ * directory, so counting both would count the same keys twice.
+ *
+ * Returns an empty array rather than throwing: for callers that only name the
+ * layers, and for those with their own answer to a project that has none.
+ * {@link resolveLayersToScan} is the one to scan with.
+ */
+export function nonAliasLayers(config: I18nConfig): LocaleDir[] {
+  return config.localeDirs.filter(d => !d.aliasOf)
+}
+
+/**
  * The locale directories an operation should scan: one named layer, or every
- * non-alias layer. Alias layers are skipped because they point at another
- * layer's files, so scanning both would count the same keys twice.
+ * non-alias layer when the name is omitted or `'*'`.
  *
  * Throws rather than returning empty: an operation with nothing to scan has no
  * meaningful result, and a mistyped layer name should say so.
  */
 export function resolveLayersToScan(config: I18nConfig, layer?: string): LocaleDir[] {
-  const layers = layer
-    ? config.localeDirs.filter(d => d.layer === layer)
-    : config.localeDirs.filter(d => !d.aliasOf)
+  const named = layer && layer !== ALL_LAYERS ? layer : undefined
+  const layers = named !== undefined
+    ? config.localeDirs.filter(d => d.layer === named)
+    : nonAliasLayers(config)
 
   if (layers.length === 0) {
     // Surfaces the better "layer not found, here are the valid ones" error.
-    if (layer) findLayerOrThrow(config, layer)
+    if (named !== undefined) findLayerOrThrow(config, named)
     throw new ToolError(
       'No locale directories found. Run discover to verify the project setup.',
       'LAYER_NOT_FOUND',

@@ -16,7 +16,7 @@ import { getNestedValue, getLeafKeys } from '../io/key-operations.js'
 import { ToolError } from '../utils/errors.js'
 
 import type { LocaleRefInfo } from './types.js'
-import { findLayerOrThrow, findReferenceLocaleOrThrow, findLocaleImpl, localeRefInfo, resolveLayersToScan } from './shared.js'
+import { ALL_LAYERS, findReferenceLocaleOrThrow, findLocaleImpl, localeRefInfo, resolveLayersToScan } from './shared.js'
 import { resolveProtectedLocales } from './ops-translate.js'
 
 // ─── paging ──────────────────────────────────────────────────────
@@ -276,7 +276,10 @@ export async function getTranslations(opts: {
   offset?: number
   projectDir?: string
 }): Promise<GetTranslationsOutcome> {
-  const { layer, locale, keyPrefix } = opts
+  const { locale, keyPrefix } = opts
+  // '*' and an omitted layer are the same request, and the answer shape below
+  // turns on "was one layer named" rather than on the spelling.
+  const layer = opts.layer === ALL_LAYERS ? undefined : opts.layer
   const dir = opts.projectDir ?? process.cwd()
   const config = await detectI18nConfig(dir)
 
@@ -594,16 +597,7 @@ export async function collectEmptyTranslations(
       })()
     : config.locales
 
-  const layersToScan = layer
-    ? config.localeDirs.filter(d => d.layer === layer)
-    : config.localeDirs.filter(d => !d.aliasOf)
-
-  if (layersToScan.length === 0) {
-    if (layer) {
-      findLayerOrThrow(config, layer)
-    }
-    throw new ToolError('No locale directories found.', 'LAYER_NOT_FOUND')
-  }
+  const layersToScan = resolveLayersToScan(config, layer)
 
   const emptyKeys: Record<string, Record<string, string[]>> = {}
   let totalEmpty = 0
@@ -825,16 +819,7 @@ export async function searchTranslations(opts: {
   const matchMode = opts.matchMode ?? 'contains'
   const isMatch = buildMatcher(matchMode, query)
 
-  const layersToSearch = (layer && layer !== '*')
-    ? config.localeDirs.filter(d => d.layer === layer)
-    : config.localeDirs.filter(d => !d.aliasOf)
-
-  if (layersToSearch.length === 0) {
-    if (layer && layer !== '*') {
-      findLayerOrThrow(config, layer)
-    }
-    throw new ToolError('No locale directories found. Run discover to verify the project setup.', 'LAYER_NOT_FOUND')
-  }
+  const layersToSearch = resolveLayersToScan(config, layer)
 
   const localesToSearch = locale
     ? (() => {
@@ -934,12 +919,7 @@ export async function listNamespaces(opts: {
   const dir = opts.projectDir ?? process.cwd()
   const config = await detectI18nConfig(dir)
 
-  if (opts.layer && opts.layer !== '*') {
-    findLayerOrThrow(config, opts.layer)
-  }
-  const layersToScan = (opts.layer && opts.layer !== '*')
-    ? config.localeDirs.filter(d => d.layer === opts.layer)
-    : config.localeDirs.filter(d => !d.aliasOf)
+  const layersToScan = resolveLayersToScan(config, opts.layer)
 
   const localeToUse = opts.locale
     ? findLocaleImpl(config, opts.locale) ?? (() => {
