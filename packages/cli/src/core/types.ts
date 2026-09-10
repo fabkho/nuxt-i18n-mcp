@@ -44,17 +44,41 @@ export interface UnresolvedLocaleRef {
 
 // ─── Placeholder validation ──────────────────────────────────────
 
-export interface PlaceholderValidationIssue {
-  locale: string
-  key: string
+/**
+ * Which parity rule an issue came from, so a caller can filter or route them.
+ * The interpolation family — `{name}`, `{0}`, `@:linked.key`, `:param` — shares
+ * the single `placeholder` kind: one value mixes them freely and every one of
+ * them means the same thing to a reader, "an argument the message needs".
+ * Markup and printf conversions get their own kinds because a report may want
+ * to treat losing `<b>` differently from losing `{count}`.
+ */
+export type PlaceholderIssueKind =
+  | 'placeholder'
+  | 'plural-count'
+  | 'html-tag'
+  | 'html-entity'
+  | 'printf'
+
+/** What comparing one source value with one translation of it found, with no
+ *  record of which values those were — the unit a per-locale validation and a
+ *  lint-style report share. */
+export interface PlaceholderIssue {
+  /** Tokens the source has that the translation dropped, each named. A token
+   *  dropped more than once carries the count, as `<b> ×2`. */
   missing: string[]
+  /** Tokens the translation has that the source does not, named the same way. */
   extra: string[]
-  /** What failed: placeholder set mismatch (default) or vue-i18n plural
-   *  variant-count mismatch. Optional for backwards compatibility. */
-  kind?: 'placeholder' | 'plural-count'
+  /** What failed: placeholder set mismatch (default) or one of the other
+   *  parity rules. Optional for backwards compatibility. */
+  kind?: PlaceholderIssueKind
   /** Present for kind 'plural-count': variant counts of source and target. */
   sourceVariants?: number
   targetVariants?: number
+}
+
+export interface PlaceholderValidationIssue extends PlaceholderIssue {
+  locale: string
+  key: string
 }
 
 export interface PlaceholderValidationResult {
