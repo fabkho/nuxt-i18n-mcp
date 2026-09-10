@@ -15,11 +15,29 @@
  * an error in the session.
  */
 
-import { existsSync } from "node:fs";
+import { appendFileSync, existsSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 
 const WIDGET_KEY = "the-i18n-kit";
+
+/**
+ * Diagnostics for the one thing a widget cannot report about itself: why it did
+ * not change. `I18N_KIT_WIDGET_DEBUG=<file>` appends every decision — events
+ * seen, tools matched, what the CLI returned — so a session that shows a stale
+ * line can be read afterwards instead of guessed at.
+ */
+const DEBUG_FILE = process.env.I18N_KIT_WIDGET_DEBUG;
+
+function debug(message: string, data?: unknown): void {
+  if (!DEBUG_FILE) return;
+  const suffix = data === undefined ? "" : ` ${JSON.stringify(data)}`;
+  try {
+    appendFileSync(DEBUG_FILE, `${new Date().toISOString()} ${message}${suffix}\n`);
+  } catch {
+    // diagnostics never break the session
+  }
+}
 
 const CONFIG_FILES = [
   ".i18n-mcp.json",
@@ -47,13 +65,20 @@ interface LocaleStatus {
   code: string;
   completion?: number;
   missing?: number;
+  total?: number;
+  translated?: number;
   protected?: boolean;
   excludedFromOverall?: boolean;
 }
 
 interface StatusResult {
   locales?: LocaleStatus[];
-  summary?: { completionPercent?: number; missingKeys?: number };
+  summary?: {
+    completionPercent?: number;
+    missingKeys?: number;
+    totalKeys?: number;
+    translatedKeys?: number;
+  };
 }
 
 /** Nearest ancestor directory holding an i18n-kit config, if any. */
@@ -90,12 +115,34 @@ export function formatProgress(progress: Record<string, unknown>): string {
 }
 
 /**
- * Coverage rounded down, never up: in a large project one missing key out of a
- * quarter million rounds to 100%, and a widget claiming 100% next to a missing
- * count is a widget nobody believes. Only exactly 100 prints as 100.
+ * Coverage rounded down, never up, and computed from key counts where the
+ * status result carries them.
+ *
+ * A quarter-million-key project with one key missing per locale is 99.99%
+ * coverage, which the CLI reports as `completionPercent: 100` — so a widget
+ * that trusts that field says "100%" next to "26 missing" and teaches you to
+ * distrust it. Recomputing from translated/total keeps the number honest, and
+ * flooring keeps 100 for the one case that earns it.
  */
+function overallPercent(summary: StatusResult["summary"]): number | undefined {
+  const total = summary?.totalKeys;
+  const translated = summary?.translatedKeys;
+  if (typeof total === "number" && typeof translated === "number" && total > 0) {
+    return formatPercent((translated / total) * 100);
+  }
+  return summary?.completionPercent === undefined ? undefined : formatPercent(summary.completionPercent);
+}
+
 function formatPercent(value: number): number {
   return value >= 100 ? 100 : Math.floor(value);
+}
+
+/** A locale's own coverage, from its key counts where present. */
+function localePercent(locale: LocaleStatus): number {
+  if (typeof locale.total === "number" && typeof locale.translated === "number" && locale.total > 0) {
+    return formatPercent((locale.translated / locale.total) * 100);
+  }
+  return formatPercent(locale.completion ?? 0);
 }
 
 /**
@@ -107,19 +154,21 @@ export function formatCoverage(status: StatusResult): string | undefined {
   const locales = (status.locales ?? []).filter(
     (locale) => locale.excludedFromOverall !== true && typeof locale.completion === "number",
   );
-  const overall = status.summary?.completionPercent;
+  const overall = overallPercent(status.summary);
   const missing = status.summary?.missingKeys ?? 0;
   if (locales.length === 0 && overall === undefined) return undefined;
   if (missing === 0) return "🌐 i18n complete";
 
+  // Rounded completion hides a single missing key in a large locale, so the
+  // missing count decides what counts as incomplete.
   const incomplete = locales
-    .filter((locale) => (locale.completion ?? 100) < 100)
-    .sort((a, b) => (a.completion ?? 100) - (b.completion ?? 100));
+    .filter((locale) => (locale.missing ?? 0) > 0 || (locale.completion ?? 100) < 100)
+    .sort((a, b) => localePercent(a) - localePercent(b));
 
   const parts: string[] = [];
-  if (overall !== undefined) parts.push(`${formatPercent(overall)}%`);
+  if (overall !== undefined) parts.push(`${overall}%`);
   for (const locale of incomplete.slice(0, MAX_LISTED_LOCALES)) {
-    parts.push(`${locale.code} ${formatPercent(locale.completion ?? 0)}%`);
+    parts.push(`${locale.code} ${localePercent(locale)}%`);
   }
   const rest = incomplete.length - MAX_LISTED_LOCALES;
   if (rest > 0) parts.push(`+${rest} more`);
@@ -159,12 +208,20 @@ export default function i18nKitWidget(pi: ExtensionAPI): void {
         cwd: projectRoot,
         timeout: 60_000,
       });
-      if (result.code !== 0) return;
+      if (result.code !== 0) {
+        debug("status failed", { code: result.code, stderr: result.stderr.slice(0, 200) });
+        return;
+      }
       const parsed = JSON.parse(result.stdout) as StatusResult & { error?: unknown };
-      if (parsed.error) return;
-      setLine(ctx, formatCoverage(parsed));
-    } catch {
-      // A widget is never worth an error in the session.
+      if (parsed.error) {
+        debug("status returned an error result", parsed.error);
+        return;
+      }
+      const line = formatCoverage(parsed);
+      debug("refreshed", { line, summary: parsed.summary });
+      setLine(ctx, line);
+    } catch (error) {
+      debug("refresh threw", { message: error instanceof Error ? error.message : String(error) });
     } finally {
       refreshing = false;
     }
@@ -178,6 +235,7 @@ export default function i18nKitWidget(pi: ExtensionAPI): void {
   pi.on("session_start", (_event, ctx) => {
     if (!ctx.hasUI) return;
     projectRoot = findProjectRoot(ctx.cwd);
+    debug("session_start", { cwd: ctx.cwd, projectRoot, cli: projectRoot ? resolveCli(projectRoot) : undefined });
     if (!projectRoot) return;
     void refresh(ctx);
   });
@@ -194,7 +252,10 @@ export default function i18nKitWidget(pi: ExtensionAPI): void {
 
   pi.on("tool_execution_end", (event, ctx) => {
     if (!projectRoot) return;
-    if (!isMutatingKitTool(toolNameOf(event.toolName, event.result?.details))) return;
+    const tool = toolNameOf(event.toolName, event.result?.details);
+    const matched = isMutatingKitTool(tool);
+    debug("tool_execution_end", { toolName: event.toolName, tool, matched });
+    if (!matched) return;
     scheduleRefresh(ctx);
   });
 
