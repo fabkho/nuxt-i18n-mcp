@@ -1,5 +1,12 @@
 # Changelog
 
+## [8.2.1](https://github.com/fabkho/the-i18n-kit/compare/the-i18n-kit-cli-8.2.0...the-i18n-kit-cli-8.2.1) (2026-09-10)
+
+
+### Bug Fixes
+
+* **ci:** commit the translation memory with the translations it describes ([#506](https://github.com/fabkho/the-i18n-kit/issues/506)) ([35fccf9](https://github.com/fabkho/the-i18n-kit/commit/35fccf99261a5e2d8ff891da8d0b72d03737f624))
+
 ## [8.2.0](https://github.com/fabkho/the-i18n-kit/compare/the-i18n-kit-cli-8.1.0...the-i18n-kit-cli-8.2.0) (2026-09-09)
 
 
