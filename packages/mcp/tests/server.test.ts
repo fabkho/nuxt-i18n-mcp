@@ -718,6 +718,40 @@ describe('the-i18n-mcp server over in-memory transport', () => {
     expect(text).toContain('no-such-layer')
   })
 
+  // The monorepo case: a resource URI names a layer and a locale, never a
+  // project, so it is always the server's own — but the config cache also
+  // remembers whichever directory a tool last resolved, and reading through
+  // that answers a read for the root project with another app's locale files.
+  it('reads the default project even when the last tool call named another app', async () => {
+    const otherApp = await makeProject()
+    try {
+      await writeFile(
+        join(otherApp, 'i18n', 'locales', 'de.json'),
+        JSON.stringify({ greeting: 'Aus der anderen App' }),
+      )
+      await callTool('discover', { projectDir: otherApp })
+
+      const result = await client.readResource({ uri: 'i18n:///root/de' })
+      const content = result.contents[0] as { text: string }
+
+      expect(JSON.parse(content.text)).toMatchObject({ greeting: 'Hallo {name}' })
+    } finally {
+      await rm(otherApp, { recursive: true, force: true })
+    }
+  })
+
+  it('serves a value written through a tool on the next resource read', async () => {
+    await callTool('write_translations', {
+      projectDir,
+      layer: 'root',
+      translations: { 'resource.probe': { de: 'geschrieben' } },
+    })
+
+    const result = await client.readResource({ uri: 'i18n:///root/de' })
+    const content = result.contents[0] as { text: string }
+
+    expect(JSON.parse(content.text)).toMatchObject({ resource: { probe: 'geschrieben' } })
+  })
 })
 
 /**

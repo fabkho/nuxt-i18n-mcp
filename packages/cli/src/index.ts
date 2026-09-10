@@ -123,7 +123,7 @@ export type {
 export * from './core/types.js'
 
 // Config
-export { detectI18nConfig, getCachedConfig, clearConfigCache } from './config/detector.js'
+export { detectI18nConfig, getCachedConfig, clearConfigCache, clearConfigCacheFor } from './config/detector.js'
 // The spelling the config cache keys on. A consumer comparing one directory
 // against another (the MCP server confining a caller-supplied projectDir to
 // its root) has to resolve `..` and symlinks the same way, or the two answer
